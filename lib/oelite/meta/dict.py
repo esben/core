@@ -80,10 +80,13 @@ class DictMeta(MetaData):
 
 
     def trim_expand_cache(self, var):
+        to_delete = []
         for (cached_var, (cached_val, deps)) in self.expand_cache.items():
             if cached_var == var or var in deps:
                 # FIXME: is it safe to delete from the dict we are iterating ?
-                del self.expand_cache[cached_var]
+                to_delete.append(cached_var)
+        for var in to_delete:
+            del self.expand_cache[var]
         return
 
 
