@@ -418,6 +418,8 @@ class OEliteBaker:
             package = self.cookbook.get_package(id=package)
             recipe = self.cookbook.get_recipe(package=package.id)
             buildhash = self.runq.get_package_buildhash(package.id)
+            print "package.arch =", package.arch
+            print "EXTRA_ARCH =", package.recipe.meta.get("EXTRA_ARCH")
             filename = os.path.join(
                 deploy_dir, package.type,
                 package.arch + (package.recipe.meta.get("EXTRA_ARCH") or ""),
