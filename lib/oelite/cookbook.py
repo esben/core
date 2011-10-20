@@ -731,7 +731,6 @@ class CookBook(Mapping):
             for package in packages:
                 arch = (recipe.meta.get("PACKAGE_ARCH_" + package) or
                         recipe.meta.get("RECIPE_ARCH"))
-                arch += recipe.meta.get("EXTRA_ARCH") or ""
                 type = (recipe.meta.get("PACKAGE_TYPE_" + package) or
                         recipe.meta.get("RECIPE_TYPE"))
                 package_id = self.add_package(recipe, package, type, arch)
