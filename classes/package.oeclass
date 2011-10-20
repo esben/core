@@ -146,7 +146,7 @@ python do_package () {
     for var in pkgmetavars:
         pkgmetadefaults[var] = d.get(var) or None
 
-    recipe_arch = d.get("RECIPE_ARCH") + (d.get("EXTRA_ARCH") or "")
+    recipe_arch = d.get("RECIPE_ARCH")
     recipe_type = d.get("RECIPE_TYPE")
     pkgd = d.getVar("PKGD", True)
     deploy_dir = d.getVar("PACKAGE_DEPLOY_DIR", True)

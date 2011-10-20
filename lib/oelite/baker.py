@@ -311,8 +311,9 @@ class OEliteBaker:
             machine = recipe.meta.get("MACHINE")
             if machine and not recipe.meta.get("EXTRA_ARCH"):
                 for depend_recipe in depend_recipes:
-                    if depend_recipe.meta.get("EXTRA_ARCH"):
-                        recipe.meta.set("EXTRA_ARCH", "." + machine)
+                    depend_extra_arch = depend_recipe.meta.get("EXTRA_ARCH")
+                    if depend_extra_arch:
+                        recipe.meta.set("EXTRA_ARCH", depend_extra_arch)
             try:
                 datahash = recipe.datahash()
             except oelite.meta.ExpansionError as e:
