@@ -73,6 +73,10 @@ class SvnFetcher():
                 self.dest += repo_name
         else:
             self.dest = repo_name
+        try:
+            self.scmdata_keep = (uri.params["scmdata"] == "keep")
+        except KeyError:
+            self.scmdata_keep = False
         self.fetch_signatures = d["__fetch_signatures"]
         return
 
@@ -177,4 +181,6 @@ class SvnFetcher():
         os.symlink(os.path.join(self.wc, ".svn"),
                    os.path.join(self.dest, ".svn"))
         client.update(self.dest, revision=self.get_revision())
+        if not self.scmdata_keep:
+            os.unlink(os.path.join(self.dest, ".svn"))
         return True
