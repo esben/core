@@ -56,7 +56,7 @@ class SvnFetcher():
             protocol = uri.params["protocol"]
         except KeyError:
             protocol = "svn"
-        self.repo_url = "%s://%s"%(protocol, self.uri.location)
+        self.url = "%s://%s"%(protocol, self.uri.location)
         try:
             self.rev = uri.params["rev"]
         except:
@@ -135,19 +135,28 @@ class SvnFetcher():
             os.makedirs(os.path.dirname(self.wc))
         def get_login(real, username, may_save):
             import getpass
-            print "Enter SVN credentials for", self.repo_url
+            print "Enter SVN credentials for", self.url
             real_stdin = sys.stdin
             username = getpass.getuser()
-            with open("/dev/tty") as tty:
-                sys.stdin = tty
-                username = (raw_input("Username (default '%s'): "%(username))
-                            or username)
-            sys.stdin = real_stdin
+            try:
+                with open("/dev/tty") as tty:
+                    sys.stdin = tty
+                    username = (raw_input("Username (default '%s'): "%(username))
+                                or username)
+                    sys.stdin = real_stdin
+            except:
+                sys.stdin = real_stdin
+                print "Error: SVN authorization failed"
+                return False, None, None, None
             password = getpass.getpass()
             return True, username, password, True
         client.callback_get_login = get_login
-        client.checkout(self.repo_url, self.wc, recurse=True,
+        try:
+            client.checkout(self.url, self.wc, recurse=True,
                         revision=self.get_revision(), ignore_externals=False)
+        except:
+            print "Error: SVN authorization failed"
+            return False
         if self.rev == "HEAD":
             return True
         m = hashlib.sha1()
