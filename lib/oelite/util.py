@@ -2,6 +2,7 @@ import tarfile
 import os
 import sys
 
+
 def format_textblock(text, indent=2, width=78, first_indent=None):
     """
     Format a text block.
@@ -41,6 +42,7 @@ def format_textblock(text, indent=2, width=78, first_indent=None):
 class NullStream:
     def write(self, text):
         pass
+
 
 class TeeStream:
     def __init__(self, files):
@@ -102,6 +104,7 @@ class TarFile(tarfile.TarFile):
             tarfile.TarFile.__exit__(self, *args)
         except AttributeError:
             self.close()
+
 
 def progress_info(msg, total, current):
     if os.isatty(sys.stdout.fileno()):
