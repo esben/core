@@ -38,9 +38,14 @@ def do_split(d):
     for pkg in package_list:
         root = os.path.join(pkgd, pkg)
         bb.utils.mkdirhier(root)
-
         files = (d.get("FILES_" + pkg) or "").split()
-        for file in files:
+        resolved_files = []
+        removed_files = []
+        while len(files):
+            file = files.pop(0)
+            remove = file.startswith("!")
+            if remove:
+                file = file[1:]
             if os.path.isabs(file):
                 file = "." + file
             if not os.path.islink(file):
@@ -53,15 +58,32 @@ def do_split(d):
             if globbed:
                 if [ file ] != globbed:
                     if not file in globbed:
-                        files += globbed
+                        if remove:
+                            files += ["!"+ x for x in globbed]
+                        else:
+                            files += globbed
                         continue
                     else:
                         globbed.remove(file)
-                        files += globbed
+                        if remove:
+                            files += ["!"+ x for x in globbed]
+                        else:
+                            files += globbed
+                        continue
+
             if (not os.path.islink(file)) and (not os.path.exists(file)):
                 continue
-            if file in seen:
+            if remove:
+                removed_files.append(file)
                 continue
+            if not file in seen:
+                resolved_files.append(file)
+
+        for file in removed_files:
+            if file in resolved_files:
+                resolved_files.remove(file)
+
+        for file in resolved_files:
             seen.append(file)
             if os.path.isdir(file) and not os.path.islink(file):
                 bb.utils.mkdirhier(os.path.join(root,file))
