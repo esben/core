@@ -1,0 +1,4 @@
+#SRC_URI = "svn://svn.apache.org/repos/asf/subversion/trunk;protocol=http"
+#SRC_URI = "svn://svn.apache.org/repos/asf/subversion/trunk;protocol=http;scmdata=keep"
+SRC_URI = "svn://svn.apache.org/repos/asf/subversion/trunk;protocol=http;rev=2012-10-01"
+#SRC_URI = "svn://svn.apache.org/repos/asf/subversion/trunk;protocol=http;rev=r1398000"

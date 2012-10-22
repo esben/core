@@ -1,0 +1,7 @@
+SRC_URI = "git://oe-lite.org/oe-lite/core.git;remote=upstream"
+#SRC_URI = "git://git.oe-lite.org/oe-lite/core.git;protocol=http;remote=upstream"
+#SRC_URI .= ;branch=master"
+#SRC_URI .= "branch=3.0"
+#SRC_URI .= "tag=v3.1.0"
+
+SRC_URI += "git://oe-lite.org/oe-lite/core.git;protocol=http;remote=upstream"
