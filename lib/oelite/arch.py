@@ -100,27 +100,37 @@ cpuspecs = {
             'mcpu'		: 'cortex-a8',
             'mtune'	 	: 'cortex-a8',
             'abi flags'         : [
-                ['float abi', 'hard', {
-                        'hard' : {
-                            'float' : 'hard',
-                            'fpu'   : 'neon',
-                            'vendor' : 'neon',
-                            },
-                        'softfp' : {
-                            'float' : 'softfp',
-                            'fpu'   : 'neon',
-                            'vendor' : 'neonsfp',
-                            },
+                ['float abi', 'soft', {
                         'soft' : {
-                            'float' : 'soft',
+                            'float'  : 'soft',
                             'vendor' : 'sfp',
                             },
                         }
+                        'hard' : {
+                            'float'  : 'hard',
+                            'fpu'    : 'neon',
+                            'vendor' : 'neon',
+                            },
+                        'softfp' : {
+                            'float'  : 'softfp',
+                            'fpu'    : 'neon',
+                            'vendor' : 'neonsfp',
+                            },
+                        'hard' : {
+                            'float'  : 'hard',
+                            'fpu'    : 'neon',
+                            'vendor' : 'neon',
+                            },
+                        'softfp' : {
+                            'float'  : 'softfp',
+                            'fpu'    : 'neon',
+                            'vendor' : 'neonsfp',
+                            },
                  ],
                 ['instruction set', 'thumb', {
                         'arm' : { },
                         'thumb' : {
-                            'thumb' : '1',
+                            'thumb'  : '1',
                             'vendor' : 't',
                             },
                         }
@@ -137,6 +147,43 @@ cpuspecs = {
         'cortexa9'		: {
             'mcpu'		: 'cortex-a9',
             'mtune'		: 'cortex-a9',
+            'abi flags'         : [
+                ['float abi', 'hard', {
+                        'hard' : {
+                            'float'  : 'hard',
+                            'fpu'    : 'vfp',
+                            'vendor' : 'hfp',
+                            },
+                        'softfp' : {
+                            'float'  : 'softfp',
+                            'fpu'    : 'vfp',
+                            'vendor' : 'sfp',
+                            },
+                        'soft' : {
+                            'float'  : 'soft',
+                            },
+                        'neonhfp' : {
+                            'float'  : 'hard',
+                            'fpu'    : 'neon',
+                            'vendor' : 'neonhfp',
+                            },
+
+                        'neonsfp' : {
+                            'float'  : 'softfp',
+                            'fpu'    : 'neon',
+                            'vendor' : 'neonsfp',
+                            },
+                        }
+                 ],
+                ['instruction set', 'thumb', {
+                        'arm' : { },
+                        'thumb' : {
+                            'thumb'  : '1',
+                            'vendor' : 't',
+                            },
+                        }
+                 ],
+                ]
             },
         'cortexa9neon'		: {
             'mcpu'		: 'cortex-a9',
