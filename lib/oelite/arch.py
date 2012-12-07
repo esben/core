@@ -15,6 +15,26 @@ gccspecs = {}
 
 cpuspecs = {
 
+    'm68k'		: {
+        'DEFAULT'		: {
+            'wordsize'		: '32',
+            'endian'		: 'b',
+            'elf'		: 'ELF 32-bit MSB .*, foobar',
+            },
+        'mcf51'			: {
+            'mcpu'		: '51',
+            },
+        'mcf5206'		: {
+            'mcpu'		: '5206',
+            },
+        'mcf5206e'		: {
+            'mcpu'		: '5206e',
+            },
+        'mcf5208'		: {
+            'mcpu'		: '5208',
+            },
+        },
+
     'powerpc'		: {
         'DEFAULT'		: {
             'wordsize'		: '32',
