@@ -4,7 +4,7 @@ HOMEPAGE = "http://www.gnu.org/software/ncurses/ncurses.html"
 
 RECIPE_TYPES = "machine native sdk"
 
-COMPATIBLE_HOST_ARCHS = ".*-linux-gnu.*"
+COMPATIBLE_HOST_ARCHS = ".*-linux-gnu.* .*linux-uclibc.*"
 
 require conf/fetch/gnu.conf
 SRC_URI = "${GNU_MIRROR}/ncurses/ncurses-${PV}.tar.gz"
