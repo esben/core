@@ -16,6 +16,10 @@ SRC_URI_GLIBC = "${GNU_MIRROR}/glibc/glibc-${CT_LIBC_VERSION}.tar.bz2;unpack=0 \
 	git://sourceware.org/git/glibc-ports.git;tag=glibc-${CT_LIBC_VERSION}"
 SRC_URI_GLIBC:TARGET_OS_mingw32 = ""
 
+SRC_URI_UCLIBC = "http://uclibc.org/downloads/uClibc-${CT_LIBC_VERSION}.tar.bz2;unpack=0"
+SRC_URI_UCLIBC += "${SRC_URI_UCLIBC_CONFIG}"
+SRC_URI_UCLIBC_CONFIG ?= "file://uClibc-${CT_LIBC_VERSION}.config"
+
 addhook set_kernel_subdir to post_recipe_parse after libc_useflags before fetch_init
 def set_kernel_subdir(d):
     if d.get("CT_KERNEL") != "linux":
@@ -43,6 +47,8 @@ SRC_URI_LINUX:TARGET_OS_mingw32 = ""
 SRC_URI_GDB ?= "${GNU_MIRROR}/gdb/gdb-${CT_GDB_VERSION}.tar.bz2;unpack=0"
 
 SRC_URI_LIBELF = "http://www.mr511.de/software/libelf-${CT_LIBELF_VERSION}.tar.gz;unpack=0"
+
+SRC_URI_ELF2FLT = "git://sources.blackfin.uclinux.org/git/users/vapier/elf2flt.git;subdir=elf2flt-cvs;${CT_ELF2FLT_VERSION}"
 
 SRC_URI_GMP = "${GNU_MIRROR}/gmp/gmp-${CT_GMP_VERSION}.tar.bz2;unpack=0"
 
@@ -88,9 +94,12 @@ def gcc_set_src_uri(d):
         add_src("SRC_URI_LINUX")
     if d.get("CT_LIBC") == "glibc":
         add_src("SRC_URI_GLIBC")
+    elif d.get("CT_LIBC") == "uClibc":
+        add_src("SRC_URI_UCLIBC")
     gcc_version = d.get("GCC_VERSION")
     if gcc_version.startswith("linaro-"):
         gcc_version = gcc_version[len("linaro-"):]
+    overrides = d.get("OVERRIDES").split(":")
     v = map(int, gcc_version.split("-")[0].split("."))
     if v[0] == 4:
         if v[1] >= 3:
@@ -98,8 +107,10 @@ def gcc_set_src_uri(d):
             add_src("SRC_URI_MPFR", "CT_USE_MPFR")
         if v[1] >= 5:
             add_src("SRC_URI_MPC", "CT_USE_MPC")
-            if target_is_linux:
+            if "TARGET_BINFMT_elf" in overrides:
                 add_src("SRC_URI_LIBELF", "CT_USE_LIBELF")
+    if d.get("CT_ARCH_BINFMT_FLAT"):
+        add_src("SRC_URI_ELF2FLT", "CT_USE_ELF2FLT")
     if d.get("CT_DEBUG_gdb"):
         add_src("SRC_URI_GDB")
     if d.get("CT_DEBUG_ltrace"):
@@ -111,6 +122,8 @@ def gcc_set_src_uri(d):
         add_src("SRC_URI_PDCURSES", "CT_USE_PDCURSES")
     # FIXME: add support for adding cloog and ppl
 
+# FIXME: libbfd is not available for HOST_OS=mingw32
+#DEPENDS += "host:libbfd host:libz"
 
 # could be nice to have a do_srcuriqa that tricks ct-ng into telling
 # what to download, and then verify that this is identical to
