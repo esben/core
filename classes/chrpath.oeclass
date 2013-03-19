@@ -1,0 +1,97 @@
+# -*- mode:python; -*-
+
+addtask chrpath after install before split
+
+META_EMIT_PREFIX += "chrpath:CHRPATH"
+
+CHRPATH_DIRS = "${base_bindir} ${bindir} ${base_sbindir} ${sbindir} \
+	${base_libdir} ${libdir} ${base_sharedlibdir} ${sharedlibdir} \
+	${libexecdir}"
+CHRPATH_REPLACE_DIRS ?= ""
+CHRPATH_STRIP_DIRS ?= "${CHRPATH_DIRS}"
+
+CHRPATH_BUILD ?= "${BUILD_PREFIX}chrpath"
+CHRPATH_HOST ?= "${HOST_PREFIX}chrpath"
+CHRPATH_TARGET ?= "${TARGET_PREFIX}chrpath"
+
+CLASS_DEPENDS += "native:chrpath host-cross:chrpath target-cross:chrpath"
+
+do_chrpath[dirs] = "${D}"
+def do_chrpath(d):
+    import stat
+    import magic
+
+    filemagic = magic.open(magic.MAGIC_NONE)
+    filemagic.load()
+
+    chrpath_cmd = {}
+    for elf_type in ("BUILD", "HOST", "TARGET"):
+        chrpath_cmd[elf_type] = (d.get("%s_ELF"%(elf_type)),
+                                 d.get("CHRPATH_%s"%(elf_type)))
+    if chrpath_cmd["TARGET"][0] == chrpath_cmd["HOST"][0]:
+        del chrpath_cmd["TARGET"]
+    if chrpath_cmd["HOST"][0] == chrpath_cmd["BUILD"][0]:
+        del chrpath_cmd["HOST"]
+    for elf_type in chrpath_cmd:
+        if not chrpath_cmd[elf_type][0]:
+            del chrpath_cmd[elf_type]
+        else:
+            chrpath_cmd[elf_type] = (re.compile(chrpath_cmd[elf_type][0]),
+                                     chrpath_cmd[elf_type][1])
+
+    def get_chrpath_cmd(path):
+        filetype = filemagic.file(path)
+        for elf_type in chrpath_cmd:
+            if chrpath_cmd[elf_type][0].match(filetype):
+                return chrpath_cmd[elf_type][1]
+        return None
+
+    def chrpath_strip(dir, recursive=False):
+        if not os.path.exists(dir):
+            return
+        assert os.path.isdir(dir)
+        for file in os.listdir(dir):
+            path = os.path.join(dir, file)
+            if os.path.islink(path):
+                continue
+            if os.path.isdir(path):
+                if recursive:
+                    chrpath_strip(path, recursive)
+                continue
+            chrpath = get_chrpath_cmd(path)
+            if not chrpath:
+                continue
+            mode = os.stat(path)[stat.ST_MODE]
+            if os.access(path, os.W_OK|os.R_OK):
+                mode = None
+            else:
+                os.chmod(path, mode|stat.S_IRWXU)
+            cmd = [chrpath, "-d", path]
+            returncode = oelite.util.shcmd(cmd)
+            if mode:
+                os.chmod(path, mode)
+        return
+
+    def chrpath_replace(dir, recursive=False):
+        # FIXME: here be code chrpath -r handling...
+        return
+
+    stripdirs = d.get("CHRPATH_STRIP_DIRS").split()
+    for dir in stripdirs:
+        recursive=False
+        if dir.endswith("//"):
+            recursive=True
+        dir = dir.strip("/")
+        chrpath_strip(dir, recursive)
+    replacedirs = d.get("CHRPATH_REPLACE_DIRS").split()
+    for dir in replacedirs:
+        if dir in stripdirs:
+            continue
+        recursive=False
+        if dir.endswith("//"):
+            recursive=True
+        dir = dir.strip("/")
+        chrpath_replace(dir, recursive)
+
+    return
+

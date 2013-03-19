@@ -115,11 +115,10 @@ SDK_TARGET_LDFLAGS_HASH_STYLE:TARGET_OS_mingw32 = ""
 
 HOST_LDFLAGS:native		 = "${BUILD_LDFLAGS} \
 	${HOST_LDFLAGS_HASH_STYLE} \
-	-Wl,-rpath,${STAGE_DIR}/native${stage_libdir} \
 	-L${STAGE_DIR}/native${stage_libdir}"
 HOST_LDFLAGS:cross		 = "${BUILD_LDFLAGS} \
 	${HOST_LDFLAGS_HASH_STYLE} \
-	-Wl,-rpath,${STAGE_DIR}/native${stage_libdir} \
+	-Wl,-rpath-link,${STAGE_DIR}/native${stage_libdir} \
 	-L${STAGE_DIR}/native${stage_libdir}"
 HOST_LDFLAGS:machine		 = "${MACHINE_LDFLAGS} \
 	${HOST_LDFLAGS_HASH_STYLE} \
@@ -129,7 +128,7 @@ HOST_LDFLAGS:sdk		 = "${SDK_LDFLAGS} \
 	--sysroot=${SDK_SYSROOT}"
 HOST_LDFLAGS:sdk-cross		 = "${BUILD_LDFLAGS} \
 	${HOST_LDFLAGS_HASH_STYLE} \
-	-Wl,-rpath,${STAGE_DIR}/native${stage_libdir} \
+	-Wl,-rpath-link,${STAGE_DIR}/native${stage_libdir} \
 	-L${STAGE_DIR}/native${stage_libdir}"
 HOST_LDFLAGS:canadian-cross	 = "${SDK_LDFLAGS} \
 	${HOST_LDFLAGS_HASH_STYLE} \
@@ -137,7 +136,6 @@ HOST_LDFLAGS:canadian-cross	 = "${SDK_LDFLAGS} \
 
 TARGET_LDFLAGS:native		 = "${BUILD_LDFLAGS} \
 	${TARGET_LDFLAGS_HASH_STYLE} \
-	-Wl,-rpath,${STAGE_DIR}/native${stage_libdir} \
 	-L${STAGE_DIR}/native${stage_libdir}"
 TARGET_LDFLAGS:cross		 = "${MACHINE_LDFLAGS} \
 	${TARGET_LDFLAGS_HASH_STYLE} \

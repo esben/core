@@ -1,0 +1,9 @@
+SRC_URI = "http://alioth.debian.org/frs/download.php/3648/chrpath-0.14.tar.gz"
+SRC_URI += "file://standarddoc.patch"
+
+RECIPE_TYPES = "native cross sdk-cross"
+
+inherit autotools-autoreconf
+
+# FIXME: fixup so autoreconf is not needed, to break circular dependency
+# between native:glib <-> native:chrpath

@@ -5,7 +5,7 @@ RECIPE_TYPES = "machine native sdk"
 
 SRC_URI = "ftp://ftp.gnu.org/gnu/readline/readline-${PV}.tar.gz"
 
-inherit autotools make-vpath
+inherit autotools make-vpath chrpath
 
 inherit auto-package-libs
 AUTO_PACKAGE_LIBS = "readline history"
