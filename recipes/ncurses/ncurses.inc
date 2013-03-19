@@ -70,6 +70,9 @@ inherit auto-package-libs
 AUTO_PACKAGE_LIBS = "ncurses form menu panel"
 FILES_${PN}-libncurses-dev = "${libdir}/libtermcap.a ${libdir}/libtermcap.so"
 PROVIDES_${PN}-libncurses = "libtermcap"
+# FIXME: find out how to convince package-qa that this libtermcap provides is
+# ok...
+PROVIDES_${PN}-libncurses[qa] = "allow-missing-soname:libtermcap"
 PROVIDES_${PN}-libncurses-dev = "libtermcap-dev"
 
 # Keep only tput/tset in primary package (clear/reset are already in busybox)

@@ -9,7 +9,7 @@ do_imageqa[dirs] = "${IMAGE_DIR}"
 IMAGEQA_HOST_READELF ?= "${HOST_PREFIX}readelf"
 IMAGEQA_HOST_READELF_SEARCH_DIRS ?= "\
 	${base_sbindir} ${base_bindir} ${sbindir} ${bindir} \
-	${base_libdir} ${libdir} \
+	${base_libdir} ${libdir} ${base_sharedlibdir} ${sharedlibdir} \
 "
 IMAGEQA_HOST_READELF_LIB_DIRS ?= "\
 	${IMAGE_DIR}${base_libdir} ${IMAGE_DIR}${libdir}"
@@ -75,7 +75,7 @@ python do_imageqa () {
                 except OSError, e:
                     bb.fatal("Execution failed %s: %s" % (cmd, e))
 
-                needed_re = re.compile(r" 0x[0-9a-f]{8} *\(NEEDED\) *Shared library: \[(.*)\]")
+                needed_re = re.compile(r" 0x[0-9a-f]{8,16} *\(NEEDED\) *Shared library: \[(.*)\]")
 
                 needed_libs = []
                 for line in cmd.stdout.readlines():
@@ -105,6 +105,9 @@ python do_imageqa () {
 
         return error
 
-    if readelf_check("HOST") or readelf_check("TARGET"):
-        bb.fatal("libraries missing")
+    try:
+        if readelf_check("HOST") or readelf_check("TARGET"):
+            bb.fatal("libraries missing")
+    finally:
+        filemagic.close()
 }
