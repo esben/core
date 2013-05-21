@@ -6,6 +6,25 @@ inherit siteinfo
 inherit libtool
 inherit make
 
+# create new classes:
+#   autoconf
+#   autoreconf
+#   automake ?
+# and deprecate the following classed (for removal in core 4):
+#   autotools
+#   autotools-autoreconf
+# and recipes should thus inherit explicitly from either of
+#   autotools
+#   autoreconf
+#   automake
+# and optionally also from one or more of
+#   libtool
+# the now deprecated autotools class should
+#   inherit autoconf libtool
+#   and provide autotools_* legacy shell function wrappers
+# the now deprecated autotools-autoreconf should
+#   inherit autoreconf
+
 EXTRA_OECONF[emit] = "do_configure"
 EXTRA_OECONF:>machine		= " cross_compiling=yes"
 EXTRA_OECONF:>cross		= " cross_compiling=yes"
