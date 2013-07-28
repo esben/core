@@ -196,64 +196,24 @@ class OEliteTask:
         self.do_cleandirs()
         cwd = self.do_dirs() or meta.get("B")
 
-        # Setup stdin, stdout and stderr redirection
-        stdin = open("/dev/null", "r")
-        logfn = "%s/%s.%s.log"%(function.tmpdir, self.name, str(os.getpid()))
-        logsymlink = "%s/%s.log"%(function.tmpdir, self.name)
-        bb.utils.mkdirhier(os.path.dirname(logfn))
-        try:
-            if self.debug:
-                logfile = os.popen("tee %s"%logfn, "w")
-            else:
-                logfile = open(logfn, "w")
-        except OSError:
-            print "Opening log file failed: %s"%(logfn)
-            raise
-
-        if os.path.exists(logsymlink) or os.path.islink(logsymlink):
-            os.remove(logsymlink)
-        os.symlink(logfn, logsymlink)
-
-        real_stdin = os.dup(sys.stdin.fileno())
-        real_stdout = os.dup(sys.stdout.fileno())
-        real_stderr = os.dup(sys.stderr.fileno())
-        os.dup2(stdin.fileno(), sys.stdin.fileno())
-        os.dup2(logfile.fileno(), sys.stdout.fileno())
-        os.dup2(logfile.fileno(), sys.stderr.fileno())
-
-        try:
-            for prefunc in self.get_prefuncs():
-                print "running prefunc", prefunc
-                self.do_cleandirs(prefunc)
-                wd = self.do_dirs(prefunc)
-                if not prefunc.run(wd or cwd):
-                    return False
-            try:
-                if not function.run(cwd):
-                    return False
-            except oebakery.FatalError:
+        for prefunc in self.get_prefuncs():
+            print "running prefunc", prefunc
+            self.do_cleandirs(prefunc)
+            wd = self.do_dirs(prefunc)
+            if not prefunc.run(wd or cwd):
                 return False
-            for postfunc in self.get_postfuncs():
-                print "running postfunc", postfunc
-                self.do_cleandirs(postfunc)
-                wd = self.do_dirs(postfunc)
-                if not postfunc.run(wd or cwd):
-                    return False
-            return True
-
-        finally:
-            # Cleanup stdin, stdout and stderr redirection
-            os.dup2(real_stdin, sys.stdin.fileno())
-            os.dup2(real_stdout, sys.stdout.fileno())
-            os.dup2(real_stderr, sys.stderr.fileno())
-            stdin.close()
-            logfile.close()
-            os.close(real_stdin)
-            os.close(real_stdout)
-            os.close(real_stderr)
-            if os.path.exists(logfn) and os.path.getsize(logfn) == 0:
-                os.remove(logsymlink)
-                os.remove(logfn) # prune empty logfiles
+        try:
+            if not function.run(cwd):
+                return False
+        except oebakery.FatalError:
+            return False
+        for postfunc in self.get_postfuncs():
+            print "running postfunc", postfunc
+            self.do_cleandirs(postfunc)
+            wd = self.do_dirs(postfunc)
+            if not postfunc.run(wd or cwd):
+                return False
+        return True
 
 
     def do_cleandirs(self, name=None):

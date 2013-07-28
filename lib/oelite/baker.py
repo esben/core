@@ -11,6 +11,7 @@ import oelite.task
 import oelite.item
 from oelite.parse import *
 from oelite.cookbook import CookBook
+import oelite.process
 
 import bb.utils
 
@@ -21,6 +22,8 @@ import shutil
 import datetime
 import hashlib
 import logging
+import select
+
 
 #INITIAL_OE_IMPORTS = "oe.path oe.utils sys os time"
 INITIAL_OE_IMPORTS = "sys os time"
@@ -530,7 +533,45 @@ class OEliteBaker:
             meta = task.meta()
             info("Running %d / %d %s"%(count, total, task))
             task.build_started()
-            if self.options.fake_build or task.run():
+            process = oelite.process.TaskProcess(task)
+            if not self.options.fake_build:
+
+                tmpdir = task.meta().get('T')
+                logfn = "%s/%s.%s.log"%(tmpdir, task.name, str(os.getpid()))
+                logsymlink = "%s/%s.log"%(tmpdir, task.name)
+                bb.utils.mkdirhier(os.path.dirname(logfn))
+                try:
+                    logfile = open(logfn, "w")
+                except OSError:
+                    print "Opening task log file failed: %s"%(logfn)
+                    raise
+                if os.path.exists(logsymlink) or os.path.islink(logsymlink):
+                    os.remove(logsymlink)
+                os.symlink(logfn, logsymlink)
+
+                (stdin, stderr, stdout) = process.start()
+                # The 'popen('tee ...') in task.py is moved to here, so
+                # that OEliteTask's does not know about such things, but instead
+                # just write to stdout and stderr.  The baker can then decide
+                # to just dump it in a log file, write it to console, do both,
+                # or perhaps show it in a window of a gui, tui, or something...
+                while process.is_alive():
+                    (rlist, wlist, xlist) = select.select(
+                        [stdout, stderr], [], [], 0.250)
+                    for f in rlist:
+                        s = f.read()
+                        if self.options.debug:
+                            print s,
+                        logfile.write(s)
+                debug("task process joined: %d", process.exitcode)
+
+                logfile.close()
+                if os.path.exists(logfn) and os.path.getsize(logfn) == 0:
+                    os.remove(logsymlink)
+                    os.remove(logfn) # prune empty logfiles
+
+                assert process.exitcode is not None
+            if self.options.fake_build or process.exitcode == 0:
                 task.build_done(self.runq.get_task_buildhash(task))
                 self.runq.mark_done(task)
             else:
