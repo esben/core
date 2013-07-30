@@ -93,7 +93,15 @@ class OEliteBaker:
     def __init__(self, options, args, config):
         self.options = options
         self.debug = self.options.debug
+        self.init_logging()
+        self.init_config() # FIXME: only call for commands that need it, moving it to the command method
+        oelite.arch.init(self.config) # FIXME: refactor to a post_conf_parse hook
+        self.init_common_inherits() # FIXME: only call for commands that need it, moving it to the command method
+        self.cookbook = CookBook(self) # FIXME: only call for commands that need it, moving it to the command method
+        self.init_things_todo(args) # FIXME: only call for commands that need it, moving it to the command method
+        return
 
+    def init_logging(self):
         # Bakery 3 compatibility, configure the logging module
         if (not hasattr(oebakery, "__version__") or
             oebakery.__version__.split(".")[0] < 4):
@@ -102,26 +110,26 @@ class OEliteBaker:
                 logging.getLogger().setLevel(logging.DEBUG)
             else:
                 logging.getLogger().setLevel(logging.INFO)
+        return
 
+    def init_config(self):
         self.config = oelite.meta.DictMeta(meta=config)
         self.config["OE_IMPORTS"] = INITIAL_OE_IMPORTS
         self.config.import_env()
         os.environ.clear()
-        self.config.pythonfunc_init()
+        self.config.pythonfunc_init() # FIXME: this should be transparent to baker...
         self.topdir = self.config.get("TOPDIR", True)
         # FIXME: self.config.freeze("TOPDIR")
-
-        self.confparser = confparse.ConfParser(self.config)
-        self.confparser.parse("conf/oe-lite.conf")
-
+        confparser = confparse.ConfParser(self.config)
+        confparser.parse("conf/oe-lite.conf")
         oelite.pyexec.exechooks(self.config, "post_conf_parse")
+        return
 
-        # FIXME: refactor oelite.arch.init to a post_conf_parse hook
-        oelite.arch.init(self.config)
-
+    def init_common_inherits(self):
         # Handle any INHERITs and inherit the base class
-        inherits  = ["core"] + (self.config.get("INHERIT", 1) or "").split()
+        inherits = ["core"] + (self.config.get("INHERIT", 1) or "").split()
         # and inherit rmwork when needed
+        # FIXME: this will go away when proper rmwork is implemented...
         try:
             rmwork = self.options.rmwork
             if rmwork is None:
@@ -138,19 +146,15 @@ class OEliteBaker:
         for inherit in inherits:
             self.oeparser.reset_lexstate()
             self.oeparser.parse("classes/%s.oeclass"%(inherit), require=True)
-
         oelite.pyexec.exechooks(self.config, "post_common_inherits")
 
-        self.cookbook = CookBook(self)
-
-        # things (ritem, item, recipe, or package) to do
+    def init_things_todo(self, args):
         if args:
             self.things_todo = args
         elif "OE_DEFAULT_THING" in self.config:
             self.things_todo = self.config.get("OE_DEFAULT_THING", 1).split()
         else:
             self.things_todo = [ "world" ]
-
         recipe_types = ("machine", "native", "sdk",
                         "cross", "sdk-cross", "canadian-cross")
         def thing_todo(thing):
@@ -173,9 +177,7 @@ class OEliteBaker:
                 dont_do_thing(world)
                 for recipe in self.cookbook.get_recipes(type=recipe_type):
                     self.recipes_todo.add(recipe)
-
         return
-
 
     def __del__(self):
         return
