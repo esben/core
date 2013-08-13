@@ -1,6 +1,8 @@
 #from oelite.meta import *
 import oelite.meta
 import oelite.recipe
+import oelite.util
+import oelite.path
 
 import bb.utils
 
@@ -21,7 +23,7 @@ class MetaCache:
 
         if os.path.exists(cachefile):
             os.unlink(cachefile)
-        bb.utils.mkdirhier(os.path.dirname(cachefile))
+        oelite.util.makedirs(os.path.dirname(cachefile))
         self.abi = pickle_abi()
         self.env_signature = baker.env_signature
         self.mtimes = set()
@@ -51,7 +53,7 @@ class MetaCache:
         except AttributeError:
             return False
         for (fn, oepath, old_mtime) in list(self.mtimes):
-            filepath = bb.utils.which(oepath, fn)
+            filepath = oelite.path.which(oepath, fn)
             if os.path.exists(filepath):
                 cur_mtime = os.path.getmtime(filepath)
             else:

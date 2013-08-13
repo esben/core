@@ -2,6 +2,8 @@ import ply.yacc
 import os
 import string
 import bb.utils
+import oelite.util
+import oelite.path
 import oelite.parse
 import oelite.meta
 from oelite.parse.oelex import tokens
@@ -12,7 +14,7 @@ class OEParser(object):
         self.lexer = oelite.parse.oelexer.clone()
         self.lexer.parser = self
         self.tokens = tokens
-        bb.utils.mkdirhier("tmp/ply")
+        oelite.util.makedirs("tmp/ply")
         picklefile = "tmp/ply/" + self.__class__.__module__ + ".p"
         self.yacc = ply.yacc.yacc(module=self, debug=0, picklefile=picklefile)
         if meta is not None:
@@ -526,7 +528,7 @@ class OEParser(object):
             if self.parent:
                 dirname = os.path.dirname(self.parent.filename)
                 oepath = "%s:%s"%(dirname, oepath)
-            filename = bb.utils.which(oepath, filename)
+            filename = oelite.path.which(oepath, filename)
         else:
             if not os.path.exists(filename):
                 print "file not found: %s"%(filename)

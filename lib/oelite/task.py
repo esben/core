@@ -4,6 +4,8 @@ import oelite.meta
 import oelite.recipe
 from oelite.dbutil import *
 import oelite.function
+import oelite.util
+
 import bb.utils
 
 import sys
@@ -200,7 +202,7 @@ class OEliteTask:
         stdin = open("/dev/null", "r")
         logfn = "%s/%s.%s.log"%(function.tmpdir, self.name, str(os.getpid()))
         logsymlink = "%s/%s.log"%(function.tmpdir, self.name)
-        bb.utils.mkdirhier(os.path.dirname(logfn))
+        oelite.util.makedirs(os.path.dirname(logfn))
         try:
             if self.debug:
                 logfile = os.popen("tee %s"%logfn, "w")
@@ -284,7 +286,7 @@ class OEliteTask:
         if dirs:
             dirs = dirs.split()
             for dir in dirs:
-                bb.utils.mkdirhier(dir)
+                oelite.util.makedirs(dir)
             return dir
 
     def get_postfuncs(self):

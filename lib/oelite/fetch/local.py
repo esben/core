@@ -1,4 +1,5 @@
 import oelite.fetch
+import oelite.path
 import bb.utils
 import os
 import hashlib
@@ -19,8 +20,8 @@ class LocalFetcher():
             d.set_input_mtime(self.localpath,
                               mtime=os.path.getmtime(self.localpath))
         else:
-            self.localpath = bb.utils.which(d.get("FILESPATH_EXISTS"),
-                                            uri.location)
+            self.localpath = oelite.path.which(d.get("FILESPATH_EXISTS"),
+                                               uri.location)
             if not self.localpath:
                 raise oelite.fetch.LocalFileNotFound(self.uri, "file not found")
             d.set_input_mtime(uri.location, d.get("FILESPATH"),

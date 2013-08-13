@@ -1,4 +1,5 @@
 import oelite.fetch
+import oelite.util
 import bb.utils
 import os
 import urlgrabber
@@ -35,7 +36,7 @@ class UrlFetcher():
     def fetch(self):
         localdir = os.path.dirname(self.localpath)
         if not os.path.exists(localdir):
-            bb.utils.mkdirhier(localdir)
+            oelite.util.makedirs(localdir)
 
         if os.path.exists(self.localpath):
             if "_signature" in dir(self):

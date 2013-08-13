@@ -2,6 +2,7 @@ import oelite
 from oelite.function import PythonFunction
 from oelite.meta import *
 import bb.utils
+import oelite.util
 import os
 
 
@@ -33,7 +34,7 @@ def exechooks(meta, name, hooks=None):
     if hooks is None:
         hooks = meta.get_hooks(name)
     tmpdir = os.path.join(meta.get("HOOKTMPDIR"), name)
-    bb.utils.mkdirhier(tmpdir)
+    oelite.util.makedirs(tmpdir)
     for function in hooks:
         pn = meta.get("PN")
         if pn:
