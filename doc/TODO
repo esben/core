@@ -1,6 +1,120 @@
+Quickstart
+----------
+
 The quickstart part here in OE-lite/core RM should cover a generic quickstart,
 for how to build something simple with just OE-lite/core and OE-lite/base.
 
 It should not be board specific (ie. only using MACHINE_CPU, not MACHINE).
 
 It should refer to OE-lite BSP's for board specific quickstart instructions.
+
+
+Autogeneration
+--------------
+
+The following parts should be auto-generated from the metadata:
+
+* Class documentation, one file/section per class. (step #1)
+* Recipe documentation, one file/section per recipe.
+* Manifest command documentation, one file/section per command.
+* USE flags index.  Providing a total list of all USE flags defined, and links
+  to the various classes and recipes that they are defined in.
+* Task index.  Providing a total list of all tasks defined, and links to the
+  various classes and recipes that they are defined in.
+
+
+The markup should be mostly like doxygen, using '##' as prefix and '@' as
+special command prefix, fx.
+
+    ## @class binconfig
+    ## Brief description of this class.
+    ##
+    ## Longer description which can span multiple lines and sections
+    ##
+    ## @useflag foobar description of foobar USE flag.
+    ##
+    ## @var HELLO_WORLD description of HELLO_WORLD variable.
+
+Multiple documentation blocks are appended, using a single blank line as
+separator.
+
+The brief description is defined as with JAVADOC_AUTOBRIEF in doxygen, ie. the
+first line (until the first dot) of a documentation block is treated as brief
+description, and the rest is detailed description.
+
+The @class special/structural command should be implicit at the top of an
+.oeclass file.
+
+For @useflag and @var special commands, they require two arguments. The first
+argument is the use flag or variable name (single word). The second argument
+is the description and extends until tne next paragraph. Paragraphs are
+delimited by a blank line or by another command.
+
+The class documentation should look like:
+
+    <brief description>
+
+    Description
+    -----------
+
+    <long description>
+
+    USE Flags
+    ---------
+
+    <use flags...>
+
+    Variables
+    ---------
+
+    <variables that could be interesting to modify when using the class>
+
+    Tasks
+    -----
+
+    <tasks that this class provides or modifies>
+
+
+The list of USE flags in class documentation will only include those that are
+specifically documented.  Doing otherwise, would also add those that are
+provided by classes inherited by the class being documented.
+
+
+So.... Should we generate from the current parser, or make a new one.  Use the
+current one, causes all inherit, include and require to be respected.  Making
+a new one gives more flexibility in that respect...
+
+Parsing a class or recipe for documentation:
+
+* Extract all '##' documentation lines, gluing together multiple blocks by
+  separating blank lines.
+
+* Lines starting with '##' inside triple quotes, or in a shell or python
+  function should not be considered documentation blocks.
+
+* Prepend class files with an implicit '@class <class name>' command and
+  recipes with an implicit '@recipe <recipe name and version>' command.
+
+* Respect require and include directives, but do not include classes with
+  inherit.
+
+* Generate list of inherited classes 'on the inherit directive'.
+
+So the parser should basically understand the OE-lite syntax, adding special
+handling of '##' lines, and changing the semantics (mostly just ignoring) all
+the usual syntax (with the exception of include, require and inherit).
+
+Parsing a recipe for documentation:
+
+* Extract all '##' documentation lines, gluing together multiple blocks by
+  separating blank lines.
+
+* Respect require and include directives, but ignore inherit.
+
+
+
+Consider adding @sa (see-also) support, for adding a "See Also" section to
+class and recipe documentation pages.
+
+
+Find a good way for adding code examples to class documentation.
