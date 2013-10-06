@@ -244,7 +244,7 @@ class OEliteTask:
         if dirs:
             dirs = dirs.split()
             for dir in dirs:
-                bb.utils.mkdirhier(dir)
+                oelite.util.makedirs(dir)
             return dir
 
     def get_postfuncs(self):

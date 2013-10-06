@@ -94,7 +94,7 @@ class OEliteBaker:
         self.options = options
         self.debug = self.options.debug
         self.init_logging()
-        self.init_config() # FIXME: only call for commands that need it, moving it to the command method
+        self.init_config(config) # FIXME: only call for commands that need it, moving it to the command method
         oelite.arch.init(self.config) # FIXME: refactor to a post_conf_parse hook
         self.init_common_inherits() # FIXME: only call for commands that need it, moving it to the command method
         self.cookbook = CookBook(self) # FIXME: only call for commands that need it, moving it to the command method
@@ -112,7 +112,7 @@ class OEliteBaker:
                 logging.getLogger().setLevel(logging.INFO)
         return
 
-    def init_config(self):
+    def init_config(self, config):
         self.config = oelite.meta.DictMeta(meta=config)
         self.config["OE_IMPORTS"] = INITIAL_OE_IMPORTS
         self.config.import_env()
@@ -541,7 +541,7 @@ class OEliteBaker:
                 tmpdir = task.meta().get('T')
                 logfn = "%s/%s.%s.log"%(tmpdir, task.name, str(os.getpid()))
                 logsymlink = "%s/%s.log"%(tmpdir, task.name)
-                bb.utils.mkdirhier(os.path.dirname(logfn))
+                oelite.util.makedirs(os.path.dirname(logfn))
                 try:
                     logfile = open(logfn, "w")
                 except OSError:
@@ -551,7 +551,10 @@ class OEliteBaker:
                     os.remove(logsymlink)
                 os.symlink(logfn, logsymlink)
 
-                (stdin, stderr, stdout) = process.start()
+                #print 'parent env:', os.environ, sys.path
+                #print 'parent namespaces:', dir(), locals().keys(), globals().keys()
+
+                (stdin, stdout) = process.start()
                 # The 'popen('tee ...') in task.py is moved to here, so
                 # that OEliteTask's does not know about such things, but instead
                 # just write to stdout and stderr.  The baker can then decide
@@ -559,7 +562,7 @@ class OEliteBaker:
                 # or perhaps show it in a window of a gui, tui, or something...
                 while process.is_alive():
                     (rlist, wlist, xlist) = select.select(
-                        [stdout, stderr], [], [], 0.250)
+                        [stdout], [], [], 0.250)
                     for f in rlist:
                         s = f.read()
                         if self.options.debug:

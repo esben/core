@@ -17,7 +17,7 @@ class SqliteMetaCache(Mapping):
         self.dbfile = dbfile
         init = True
         if dbfile != ":memory:":
-            bb.utils.mkdirhier(os.path.dirname(dbfile))
+            oelite.util.makedirs(os.path.dirname(dbfile))
             if os.path.exists(dbfile):
                 if recipes:
                     print "deleting file %s"%(dbfile)

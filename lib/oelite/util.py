@@ -122,13 +122,16 @@ class TarFile(tarfile.TarFile):
             self.close()
 
 
-def progress_info(msg, total, current):
+def progress_info(msg, total, current, errors=None):
     if os.isatty(sys.stdout.fileno()):
         fieldlen = len(str(total))
-        template = "\r%s: %%%dd / %%%dd [%2d %%%%]"%(msg, fieldlen, fieldlen,
+        template = "\r%s: %%%dd / %%%dd [%3d %%%%]"%(msg, fieldlen, fieldlen,
                                                  current*100//total)
         #sys.stdout.write("\r%s: %04d/%04d [%2d %%]"%(
         sys.stdout.write(template%(current, total))
+        if errors:
+            sys.stdout.write(" (%d error%s)"%(
+                    errors, 's' if errors > 1 else ''))
         if current == total:
             sys.stdout.write("\n")
         sys.stdout.flush()
@@ -144,3 +147,21 @@ def unique_list(seq):
     seen = set()
     seen_add = seen.add
     return [ x for x in seq if x not in seen and not seen_add(x)]
+
+
+def makedirs(path, mode=0777):
+    if os.path.exists(path):
+        return
+    os.makedirs(path, mode)
+    return
+
+
+def touch(path, makedirs=False, truncate=False):
+    if truncate:
+        mode = 'w'
+    else:
+        mode = 'a'
+    if makedirs:
+        globals()['makedirs'](os.path.dirname(path))
+    with open(path, mode):
+        os.utime(path, None)

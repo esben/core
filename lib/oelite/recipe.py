@@ -18,6 +18,7 @@ def unpickle(file, filename, cookbook):
 class OEliteRecipe:
 
     def pickle(self, file):
+        print 'file', repr(file)
         cPickle.dump(self.type, file, 2)
         self.meta.pickle(file)
 
@@ -109,10 +110,3 @@ class OEliteRecipe:
         # calculate recipe signature
 
         return
-
-
-    def is_cacheable(self):
-        dont_cache = self.get("__dont_cache")
-        if dont_cache and dont_cache != "0":
-            return False
-        return True
