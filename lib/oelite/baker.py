@@ -542,6 +542,7 @@ class OEliteBaker:
                 logsymlink = "%s/%s.log"%(tmpdir, task.name)
                 if os.path.exists(logsymlink) or os.path.islink(logsymlink):
                     os.remove(logsymlink)
+                oelite.util.makedirs(os.path.dirname(logsymlink))
                 os.symlink(logfn, logsymlink)
                 (stdout, feedback) = process.start()
                 while process.is_alive():
