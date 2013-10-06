@@ -76,9 +76,6 @@ class CookBook(Mapping):
         log.info("Parsing %d recipe file%s", len(to_parse),
                  '' if len(to_parse)==1 else 's')
         timer = time.time()
-        #log.debug(', '.join(map(oelite.path.relpath, to_parse)))
-        self.session_files = []
-
         total = len(to_parse)
         failed = []
         if not self.parallel:
@@ -134,7 +131,15 @@ class CookBook(Mapping):
                     if events & (select.EPOLLHUP | select.EPOLLRDHUP):
                         del ipc[fd]
                         epoll.unregister(fd)
-        log.debug("Time spent parsing: %d", time.time() - timer)
+        log.debug("Time spent parsing: %.3fs", time.time() - timer)
+
+        if failed:
+            for recipe, exitcode, logfile in failed:
+                print '\nError:', oelite.path.relpath(recipe)
+                with open(logfile, 'r') as logfile:
+                    print logfile.read().strip()
+            print '\nParse errors in %d recipes'%(len(failed))
+            sys.exit(1)
 
         log.info("Loading %d recipe file%s", len(recipe_files),
                  '' if len(recipe_files)==1 else 's')
@@ -151,12 +156,12 @@ class CookBook(Mapping):
             except Exception as e:
                 log.error("Loading recipe cache failed: %s", cache.cache_file)
                 raise
+            if cache.is_current([self.session_signature]):
+                cache.clean()
             for recipe_type, recipe in recipes.items():
                 recipe.post_parse()
                 oelite.pyexec.exechooks(recipe.meta, "pre_cookbook")
                 self.add_recipe(recipe)
-        for path in self.session_files:
-            os.remove(path)
         return
 
 
@@ -567,131 +572,6 @@ class CookBook(Mapping):
         return oerecipes
 
 
-
-
-    #def parse(self, recipe):
-    #    log.debug("Parsing %s", recipe)
-    #    base_meta = self.config.copy()
-    #    oelite.pyexec.exechooks(base_meta, "pre_recipe_parse")
-    #    self.oeparser.set_metadata(base_meta)
-    #    self.oeparser.reset_lexstate()
-    #    base_meta = self.oeparser.parse(os.path.abspath(recipe))
-    #    oelite.pyexec.exechooks(base_meta, "mid_recipe_parse")
-    #    recipe_types = (base_meta.get("RECIPE_TYPES") or "").split()
-    #    if not recipe_types:
-    #        recipe_types = ["machine"]
-    #    meta = {}
-    #    for recipe_type in recipe_types:
-    #        meta[recipe_type] = base_meta.copy()
-    #    for recipe_type in recipe_types:
-    #        meta[recipe_type]["RECIPE_TYPE"] = recipe_type
-    #        self.oeparser.set_metadata(meta[recipe_type])
-    #        self.oeparser.parse("classes/type/%s.oeclass"%(recipe_type))
-    #        def arch_is_compatible(meta, arch_type):
-    #            compatible_archs = meta.get("COMPATIBLE_%s_ARCHS"%arch_type)
-    #            if compatible_archs is None:
-    #                return True
-    #            arch = meta.get(arch_type + "_ARCH")
-    #            for compatible_arch in compatible_archs.split():
-    #                if re.match(compatible_arch, arch):
-    #                    return True
-    #            debug("skipping %s_ARCH incompatible recipe %s:%s"%(
-    #                arch_type, recipe_type, meta.get("PN")))
-    #            return False
-    #        def cpu_families_is_compatible(meta, arch_type):
-    #            compatible_cpu_fams = meta.get("COMPATIBLE_%s_CPU_FAMILIES"%arch_type)
-    #            if compatible_cpu_fams is None:
-    #                return True
-    #            cpu_fams = meta.get(arch_type + "_CPU_FAMILIES")
-    #            if not cpu_fams:
-    #                return False
-    #            for compatible_cpu_fam in compatible_cpu_fams.split():
-    #                for cpu_fam in cpu_fams.split():
-    #                    if re.match(compatible_cpu_fam, cpu_fam):
-    #                        return True
-    #            debug("skipping %s_CPU_FAMILIES incompatible recipe %s:%s"%(
-    #                arch_type, recipe_type, meta.get("PN")))
-    #            return False
-    #        def machine_is_compatible(meta):
-    #            compatible_machines = meta.get("COMPATIBLE_MACHINES")
-    #            if compatible_machines is None:
-    #                return True
-    #            machine = meta.get("MACHINE")
-    #            if machine is None:
-    #                debug("skipping MACHINE incompatible recipe %s:%s"%(
-    #                    recipe_type, meta.get("PN")))
-    #                return False
-    #            for compatible_machine in compatible_machines.split():
-    #                if re.match(compatible_machine, machine):
-    #                    return True
-    #            debug("skipping MACHINE incompatible recipe %s:%s"%(
-    #                recipe_type, meta.get("PN")))
-    #            return False
-    #        def recipe_is_compatible(meta):
-    #            incompatible_recipes = meta.get("INCOMPATIBLE_RECIPES")
-    #            if incompatible_recipes is None:
-    #                return True
-    #            pn = meta.get("PN")
-    #            pv = meta.get("PV")
-    #            for incompatible_recipe in incompatible_recipes.split():
-    #                if "_" in incompatible_recipe:
-    #                    incompatible_recipe = incompatible_recipe.rsplit("_", 1)
-    #                else:
-    #                    incompatible_recipe = (incompatible_recipe, None)
-    #                if not re.match("%s$"%(incompatible_recipe[0]), pn):
-    #                    continue
-    #                if incompatible_recipe[1] is None:
-    #                    return False
-    #                if re.match("%s$"%(incompatible_recipe[1]), pv):
-    #                    debug("skipping incompatible recipe %s:%s_%s"%(
-    #                        recipe_type, pn, pv))
-    #                    return False
-    #            return True
-    #        def compatible_use_flags(meta):
-    #            flags = meta.get("COMPATIBLE_IF_FLAGS")
-    #            if not flags:
-    #                return True
-    #            for name in flags.split():
-    #                val = meta.get("USE_"+name)
-    #                if not val:
-    #                    debug("skipping %s:%s_%s (required %s USE flag not set)"%(
-    #                            recipe_type, meta.get("PN"), meta.get("PV"),
-    #                            name))
-    #                    return False
-    #            return True
-    #        if ((not recipe_is_compatible(meta[recipe_type])) or
-    #            (not machine_is_compatible(meta[recipe_type])) or
-    #            (not arch_is_compatible(meta[recipe_type], "BUILD")) or
-    #            (not arch_is_compatible(meta[recipe_type], "HOST")) or
-    #            (not arch_is_compatible(meta[recipe_type], "TARGET"))):
-    #            del meta[recipe_type]
-    #            continue
-    #        try:
-    #            oelite.pyexec.exechooks(meta[recipe_type], "post_recipe_parse")
-    #        except oelite.HookFailed, e:
-    #            log.error("%s:%s %s post_recipe_parse hook: %s",
-    #                      recipe_type, base_meta.get("PN"), e.function, e.retval)
-    #            return False
-    #        if ((not compatible_use_flags(meta[recipe_type])) or
-    #            (not cpu_families_is_compatible(meta[recipe_type], "BUILD")) or
-    #            (not cpu_families_is_compatible(meta[recipe_type], "HOST")) or
-    #            (not cpu_families_is_compatible(meta[recipe_type], "TARGET"))):
-    #            del meta[recipe_type]
-    #            continue
-    #    def is_cacheable(meta):
-    #        for m in meta.values():
-    #            if not m.is_cacheable():
-    #                return False
-    #        return True
-    #    cache = oelite.meta.cache.MetaCache(self.config, recipe)
-    #    if is_cacheable(meta):
-    #        cache.save(self.config.env_signature(), meta)
-    #    else:
-    #        cache.save(self.session_signature, meta)
-    #        self.session_files.append(cache.cache_file)
-    #    return
-
-
     def add_recipe(self, recipe):
         self.dbc.execute(
             "INSERT INTO recipe "
@@ -887,7 +767,11 @@ class RecipeParser(oelite.process.PythonProcess):
         oelite.pyexec.exechooks(self.recipe_meta, "pre_recipe_parse")
         self.oeparser.set_metadata(self.recipe_meta)
         self.oeparser.reset_lexstate()
-        self.recipe_meta = self.oeparser.parse(os.path.abspath(self.recipe))
+        try:
+            self.recipe_meta = self.oeparser.parse(os.path.abspath(self.recipe))
+        except oelite.parse.ParseError as e:
+            e.print_details()
+            sys.exit(1)
         oelite.pyexec.exechooks(self.recipe_meta, "mid_recipe_parse")
         recipe_types = (self.recipe_meta.get("RECIPE_TYPES") or "").split()
         if not recipe_types:
@@ -898,7 +782,11 @@ class RecipeParser(oelite.process.PythonProcess):
         for recipe_type in recipe_types:
             self.meta[recipe_type]["RECIPE_TYPE"] = recipe_type
             self.oeparser.set_metadata(self.meta[recipe_type])
-            self.oeparser.parse("classes/type/%s.oeclass"%(recipe_type))
+            try:
+                self.oeparser.parse("classes/type/%s.oeclass"%(recipe_type))
+            except oelite.parse.ParseError as e:
+                e.print_details()
+                sys.exit(1)
             def arch_is_compatible(meta, arch_type):
                 compatible_archs = meta.get("COMPATIBLE_%s_ARCHS"%arch_type)
                 if compatible_archs is None:
@@ -1003,9 +891,4 @@ class RecipeParser(oelite.process.PythonProcess):
             self.cache.save(self.env_signature, self.meta)
         else:
             self.cache.save(self.session_signature, self.meta)
-            # FIXME: find another method for getting rid of session files,
-            # which is compatible with parallel parsing
-            log.error("session_files broken")
-            return 1
-            session_files.append(cache.cache_file)
         return
