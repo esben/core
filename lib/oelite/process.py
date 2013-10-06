@@ -148,6 +148,23 @@ class FeedbackReceiver(object):
 
 
 class PythonProcess(multiprocessing.Process):
+    """Wrapper for function that is run in a separate process
+
+    Anything printed to stdout and/or stderr will be redirected to the stdout
+    file specified (or os.devnull if None).  When printing to a file, writes
+    will be line buffered, so parent process can choose to print out the
+    output lines on-the-fly.  The output file is left after the process is
+    done, so it is up to the parent process to delete it as needed.
+
+    IPC like feedback from the function is supported throug an NamedPipe
+    object.  The child will get a feedback (FeedbackSender) object for sending
+    messages to the parent, and the parent get a FeedbackReceiver object from
+    the start() method.
+
+    The feedback protocol is based on JSON, so non-Python child sub-processes
+    should be able to send feedback also, by opening the underlying UNIX named
+    FIFO.
+    """
 
     def __init__(self, stdout=None, ipc=None, setsid=False, **kwargs):
         self.stdout = stdout
@@ -207,45 +224,3 @@ class TaskProcess(PythonProcess):
         except:
             self.terminate()
         return
-
-
-# and add a class for doing something like pool, but with support for progress
-# information, fx. when parsing recipes, a count of how many recipes have been
-# parsed of how many is printed.  constructor should set number of workers.
-# the pool.map like method should take the target function, a list/iterator,
-# and optionally fixed args and kwargs to give to all function calls.
-
-
-# new class
-#
-# for non-task multiprocessing, like oe-lite parsing and other python
-# functions.
-#
-# the function being "run" must be allowed to print out on stdout and stderr,
-# and this should go to an output file, which the parent process then can
-# either ignore and remove when done, print out to stdout (probably not a good
-# idea if running in parallel), or ignore while running, and in case the
-# function fails, print out all or part of the output file, and leave entire
-# output file for debugging purpose.
-#
-# a different communication "stream" must be supported from child process to
-# parent.  This should be a simple JSON/text syntax, so that the same
-# mechanism can be used independent of the language used in the child.  The
-# stream should support:
-#  + (debug)/info/warning/error/fatal messages from child to parent, although
-#  + progress information
-#
-# {"log": "debug", "message": "foobar", "time": "1380991668.191745"}
-# {"log": "info", "message": "foobar", "time": "1380991668.191745"}
-# {"log": "warning", "message": "foobar", "time": "1380991668.191745"}
-# {"log": "error", "message": "foobar", "time": "1380991668.191745"}
-# {"log": "critical", "message": "foobar", "time": "1380991668.191745"}
-# {"progress": "0%"}
-# {"progress": "2/7"}
-# {"progress": "0.13"}
-#
-# should we use multiprocessing.Pool also?  does reuse of pool worker
-# processes risk contaminating the result?  ie, is the namespace for a worker
-# process pristine for each job?
-#
-#
