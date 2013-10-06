@@ -7,66 +7,6 @@ import json
 import oelite.util
 from oelite.log import log
 
-class TaskNamedPipe(object):
-
-    def __init__(self, task, name):
-        tmpdir = task.meta().get('T')
-        path = os.path.join(tmpdir, name)
-        if os.path.exists(path):
-            os.remove(path)
-        dir = os.path.dirname(path)
-        if not os.path.exists(dir):
-            os.makedirs(dir)
-        with open(path, 'w') as f:
-            pass
-        self.path = path
-
-    def open(self, mode):
-        assert mode in ('r', 'w')
-        return open(self.path, mode)
-
-
-class TaskProcess(multiprocessing.Process):
-
-    def __init__(self, task):
-        self.task = task
-        self.input = TaskNamedPipe(task, 'input')
-        self.output = TaskNamedPipe(task, 'output')
-        super(TaskProcess, self).__init__()
-        return
-
-    def start(self):
-        super(TaskProcess, self).start()
-        return (self.input.open('w'), self.output.open('r'))
-
-    def stop(self, timeout=1):
-        if not self.is_alive():
-            return
-        os.kill(self.pid, signal.SIGINT)
-        try:
-            # wait 1 second for task process to shut down
-            self.join(timeout)
-        except:
-            self.terminate()
-        return
-
-    def run(self):
-        os.setsid()
-        log.debug("TaskProcess.run task=%s pid=%d", self.task, os.getpid())
-        input = self.input.open('r')
-        os.dup2(input.fileno(), sys.stdin.fileno())
-        output = self.output.open('w')
-        os.dup2(output.fileno(), sys.stdout.fileno())
-        os.dup2(output.fileno(), sys.stderr.fileno())
-        if self.task.run():
-            return 0
-        else:
-            return 1
-
-
-
-
-
 
 class NamedPipe(object):
 
@@ -249,25 +189,31 @@ class PythonProcess(multiprocessing.Process):
         return super(PythonProcess, self).run()
 
 
+class TaskProcess(PythonProcess):
+
+    def __init__(self, task, logfile=None):
+        if not logfile:
+            logfile = os.path.join(task.meta().get('T'), task.name + '.log')
+        super(TaskProcess, self).__init__(stdout=logfile, target=task.run)
+        return
+
+    def stop(self, timeout=1):
+        if not self.is_alive():
+            return
+        os.kill(self.pid, signal.SIGINT)
+        try:
+            # wait 1 second for task process to shut down
+            self.join(timeout)
+        except:
+            self.terminate()
+        return
+
+
 # and add a class for doing something like pool, but with support for progress
 # information, fx. when parsing recipes, a count of how many recipes have been
 # parsed of how many is printed.  constructor should set number of workers.
 # the pool.map like method should take the target function, a list/iterator,
 # and optionally fixed args and kwargs to give to all function calls.
-
-
-        # from cookbook.py
-
-        #    # implement a new class in process.py, for non-task
-        #    # multiprocessing, and a new class for communication with oelite
-        #    # subprocesses, using a (real) fifo and pickling of various
-        #    # message objects over it (or perhaps JSON format instead, as it
-        #    # should actually be faster, and allows for limiting the data to a
-        #    # known set, instead of supporting any odd Python object).  The
-        #    # messaging should include logging message (incl. debug, info,
-        #    # warning, ...) and progress information. Stdout from the process
-        #    # should be handled as logging.debug messages, and stderr ad
-        #    # logging.error messages.
 
 
 # new class
