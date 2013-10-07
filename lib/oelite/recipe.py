@@ -110,3 +110,9 @@ class OEliteRecipe:
         # calculate recipe signature
 
         return
+
+
+    def get_cache(self):
+        if not hasattr(self, 'cache'):
+            self.cache = oelite.meta.cache.MetaCache(self.cookbook.config, self)
+        return self.cache

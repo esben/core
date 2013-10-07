@@ -22,10 +22,8 @@ from pysqlite2 import dbapi2 as sqlite
 from collections import Mapping
 import random
 import time
-import select
-if not "EPOLLRDHUP" in dir(select):
-    select.EPOLLRDHUP = 0x2000
 import multiprocessing
+
 log = oelite.log.get_logger()
 
 
@@ -71,67 +69,15 @@ class CookBook(Mapping):
         for recipe in recipe_files:
             cache = oelite.meta.cache.MetaCache(self.config, recipe)
             if not cache.is_current([self.config.env_signature()]):
-                to_parse.append(recipe)
                 cache.clean()
-        log.info("Parsing %d recipe file%s", len(to_parse),
-                 '' if len(to_parse)==1 else 's')
+                to_parse.append(recipe)
         timer = time.time()
-        total = len(to_parse)
-        failed = []
-        if not self.parallel:
-            count = 0
-            for recipe in to_parse:
-                oelite.util.progress_info(
-                    "Parsing recipe metadata", total, count, len(failed))
-                parser = RecipeParser(self, recipe)
-                exitcode = parser.parse()
-                if exitcode:
-                    failed.append((recipe, exitcode, parser.stdout))
-                count += 1
-        else:
-            parsing = {}
-            ipc = {}
-            epoll = select.epoll()
-            epoll_eventmask = select.EPOLLIN | select.EPOLLPRI | \
-                select.EPOLLHUP | select.EPOLLRDHUP
-            while parsing or to_parse:
-                for pid in parsing.keys():
-                    parser, recipe, stdout, feedback = parsing[pid]
-                    if parser.is_alive():
-                        continue
-                    pid = parser.pid
-                    if parser.exitcode != 0:
-                        failed.append((recipe, parser.exitcode, stdout.name))
-                    fd = feedback.fileno()
-                    if fd in ipc:
-                        del ipc[fd]
-                        epoll.unregister(fd)
-                    del parsing[pid]
-                oelite.util.progress_info(
-                    "Parsing recipe metadata",
-                    total, total - (len(to_parse) + len(parsing)), len(failed))
-                while to_parse and len(parsing) < self.parallel:
-                    recipe = to_parse.pop()
-                    parser = RecipeParser(self, recipe, process=True)
-                    stdout, feedback = parser.start()
-                    pid = parser.pid
-                    parsing[pid] = (parser, recipe, stdout, feedback)
-                    if feedback:
-                        ipc[feedback.fileno()] = pid
-                        epoll.register(feedback.fileno(), epoll_eventmask)
-                if not ipc:
-                    continue
-                retval = epoll.poll(timeout=2)
-                for fd, events in retval:
-                    parser, recipe, stdout, feedback = parsing[ipc[fd]]
-                    if events & (select.EPOLLIN | select.EPOLLPRI):
-                        for msg in feedback:
-                            # FIXME: do something with the feedback here
-                            pass
-                    if events & (select.EPOLLHUP | select.EPOLLRDHUP):
-                        del ipc[fd]
-                        epoll.unregister(fd)
-        log.debug("Time spent parsing: %.3fs", time.time() - timer)
+        def factory(recipe, **kwargs):
+            return RecipeParser(self, recipe, **kwargs)
+        pool = oelite.process.Pool(factory, "Parsing recipe metadata")
+        failed = pool.run(to_parse, parallel=self.parallel)
+        if self.debug:
+            log.debug("Parsing recipe metadata time %.3fs", time.time() - timer)
 
         if failed:
             for recipe, exitcode, logfile in failed:
@@ -141,10 +87,13 @@ class CookBook(Mapping):
             print '\nParse errors in %d recipes'%(len(failed))
             sys.exit(1)
 
-        log.info("Loading %d recipe file%s", len(recipe_files),
-                 '' if len(recipe_files)==1 else 's')
+        total = len(recipe_files)
+        count = 0
         for recipe_file in recipe_files:
-            log.debug("Loading %s", recipe_file)
+            oelite.util.progress_info(
+                "Loading recipe metadata", total, count)
+            count += 1
+            #log.debug("Loading %s", recipe_file)
             cache = oelite.meta.cache.MetaCache(self.config, recipe_file)
             if not cache.is_current([self.config.env_signature(),
                                      self.session_signature]):
@@ -154,14 +103,14 @@ class CookBook(Mapping):
             try:
                 recipes = cache.load(self)
             except Exception as e:
-                log.error("Loading recipe cache failed: %s", cache.cache_file)
+                log.error("Loading recipe cache failed: %s", cache.recipe_cache)
                 raise
-            if cache.is_current([self.session_signature]):
-                cache.clean()
             for recipe_type, recipe in recipes.items():
                 recipe.post_parse()
                 oelite.pyexec.exechooks(recipe.meta, "pre_cookbook")
                 self.add_recipe(recipe)
+        oelite.util.progress_info(
+            "Loading recipe metadata", total, count)
         return
 
 
@@ -743,17 +692,18 @@ class RecipeParser(oelite.process.PythonProcess):
         self.cache = oelite.meta.cache.MetaCache(cookbook.config, recipe)
         self.env_signature = cookbook.config.env_signature()
         self.session_signature = cookbook.session_signature
-        if process:
-            tmpfile = os.path.join(cookbook.config.get('PARSERDIR'),
-                                   oelite.path.relpath(recipe))
-            stdout = tmpfile + '.log'
-            ipc = tmpfile + '.ipc'
-            super(RecipeParser, self).__init__(
-                stdout=stdout, ipc=ipc, target=self._parse)
+        tmpfile = os.path.join(cookbook.config.get('PARSERDIR'),
+                               oelite.path.relpath(recipe))
+        stdout = tmpfile + '.log'
+        ipc = tmpfile + '.ipc'
+        super(RecipeParser, self).__init__(
+            stdout=stdout, ipc=ipc, target=self._parse)
         return
 
     def _parse(self):
         retval = self.parse()
+        if not hasattr(self, 'feedback'):
+            return retval
         if retval:
             self.feedback.error("Parsing failed: %s"%(retval))
             assert isinstance(retval, int)

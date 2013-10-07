@@ -3,7 +3,11 @@ import os
 import multiprocessing
 import signal
 import time
+import copy
 import json
+import select
+if not "EPOLLRDHUP" in dir(select):
+    select.EPOLLRDHUP = 0x2000
 import oelite.util
 from oelite.log import log
 
@@ -210,7 +214,7 @@ class TaskProcess(PythonProcess):
 
     def __init__(self, task, logfile=None):
         if not logfile:
-            logfile = os.path.join(task.meta().get('T'), task.name + '.log')
+            logfile = os.path.join(task.meta.get('T'), task.name + '.log')
         super(TaskProcess, self).__init__(stdout=logfile, target=task.run)
         return
 
@@ -224,3 +228,86 @@ class TaskProcess(PythonProcess):
         except:
             self.terminate()
         return
+
+
+class Pool(object):
+
+    def __init__(self, factory, progress_msg):
+        self.factory = factory
+        self.progress_msg = progress_msg
+
+    def progress(self):
+        if not self.progress_msg:
+            return
+        oelite.util.progress_info(
+            self.progress_msg, self.total, self.done, len(self.failed))
+
+    def run(self, worklist, parallel=0):
+        if not worklist:
+            return
+        if parallel:
+            return self.run_async(worklist, parallel)
+        else:
+            return self.run_sync(worklist)
+
+    def run_sync(self, worklist):
+        self.total = len(worklist)
+        self.failed = []
+        self.done = 0
+        self.progress()
+        for work in worklist:
+            process = self.factory(work)
+            exitcode = process._target()
+            if exitcode:
+                failed.append((work, exitcode, process.stdout))
+            self.done += 1
+            self.progress()
+        return self.failed
+
+    def run_async(self, worklist, parallel):
+        worklist = copy.copy(worklist)
+        self.total = len(worklist)
+        self.failed = []
+        self.done = 0
+        self.progress()
+        running = {}
+        ipc = {}
+        epoll = select.epoll()
+        epoll_eventmask = select.EPOLLIN | select.EPOLLPRI | \
+            select.EPOLLHUP | select.EPOLLRDHUP
+        while running or worklist:
+            for pid in running.keys():
+                process, work, stdout, feedback = running[pid]
+                if process.is_alive():
+                    continue
+                pid = process.pid
+                if process.exitcode != 0:
+                    failed.append((work, process.exitcode, stdout.name))
+                fd = feedback.fileno()
+                if fd in ipc:
+                    del ipc[fd]
+                    epoll.unregister(fd)
+                del running[pid]
+                self.done += 1
+                self.progress()
+            while worklist and len(running) < parallel:
+                work = worklist.pop()
+                process = self.factory(work, process=True)
+                stdout, feedback = process.start()
+                pid = process.pid
+                running[pid] = (process, work, stdout, feedback)
+                if feedback:
+                    ipc[feedback.fileno()] = pid
+                    epoll.register(feedback.fileno(), epoll_eventmask)
+            if not ipc:
+                continue
+            retval = epoll.poll(timeout=2)
+            for fd, events in retval:
+                process, work, stdout, feedback = running[ipc[fd]]
+                if events & (select.EPOLLIN | select.EPOLLPRI):
+                    for msg in feedback:
+                        # FIXME: do something with the feedback here
+                        pass
+                if events & (select.EPOLLHUP | select.EPOLLRDHUP):
+                    del ipc[fd]
+                    epoll.unregister(fd)

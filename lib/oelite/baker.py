@@ -206,7 +206,7 @@ class OEliteBaker:
             self.runq._add_recipe(recipe, task)
             task = self.cookbook.get_task(recipe=recipe, name=task)
             task.prepare(self.runq)
-            meta = task.meta()
+            meta = task.meta
         else:
             meta = recipe.meta
 
@@ -310,6 +310,26 @@ class OEliteBaker:
             if not progress:
                 bb.fatal("recipe EXTRA_ARCH resolving deadlocked!")
 
+        # Prepare task metadata for all tasks, loading from cache where
+        # possible
+        start = datetime.datetime.now()
+        to_prepare = []
+        for task in self.runq.get_tasks():
+            cache = task.recipe.get_cache()
+            if cache.has_task(task):
+                cache.load_task(task)
+            else:
+                to_prepare.append(task)
+        def factory(task, **kwargs):
+            return oelite.task.MetaProcessor(task, **kwargs)
+        pool = oelite.process.Pool(factory, "Preparing task metadata")
+        failed = pool.run(to_prepare, parallel=self.cookbook.parallel)
+        for task in to_prepare:
+            cache = task.recipe.get_cache()
+            cache.load_task(task)
+        if self.debug:
+            timing_info("Preparing task metadata", start)
+
         # update runq task list, checking recipe and src hashes and
         # determining which tasks needs to be run
         # examing each task, computing it's hash, and checking if the
@@ -332,37 +352,13 @@ class OEliteBaker:
             dephashes = {}
             for depend in self.runq.task_dependencies(task, flatten=True):
                 dephashes[depend] = self.runq.get_task_metahash(depend)
-            try:
-                recipe_extra_arch = recipe.meta.get("EXTRA_ARCH")
-            except oelite.meta.ExpansionError as e:
-                e.msg += " in %s"%(task)
-                raise
-            task_meta = task.meta()
-            # FIXME: is this really needed?  How should the task metadata be
-            # changed at this point?  isn't it created from recipe meta by the
-            # task.meta() call above?
-            if (recipe_extra_arch and
-                task_meta.get("EXTRA_ARCH") != recipe_extra_arch):
-                task_meta.set("EXTRA_ARCH", recipe_extra_arch)
-            try:
-                if self.options.dump_signature_metadata:
-                    self.normpath(task.recipe.filename)
-                    dump = os.path.join(self.options.dump_signature_metadata,
-                                        self.normpath(task.recipe.filename),
-                                        str(task))
-                else:
-                    dump = None
-                datahash = task_meta.signature(dump=dump)
-            except oelite.meta.ExpansionError as e:
-                e.msg += " in %s"%(task)
-                raise
 
             hasher = hashlib.md5()
             hasher.update(str(sorted(dephashes.values())))
             dephash = hasher.hexdigest()
 
             hasher = hashlib.md5()
-            hasher.update(datahash)
+            hasher.update(task.signature)
             hasher.update(dephash)
             metahash = hasher.hexdigest()
 
@@ -393,6 +389,14 @@ class OEliteBaker:
 
         if self.debug:
             timing_info("Calculation task metadata hashes", start)
+
+        # FIXME: before cache change, time to calculate hashes for
+        # oe bake busybox was 2.141 seconds
+        # after initial implementation with saving to cache, and then loading
+        # back from cache, time is up to 2.9 seconds
+        # and with caching, down to 0.64 seconds
+        # with caching, this is total time of 2.4 seconds from start to end of
+        # hash calculation!
 
         if count != total:
             print ""
@@ -532,10 +536,10 @@ class OEliteBaker:
             debug("")
             debug("Preparing %s"%(task))
             task.prepare(self.runq)
-            meta = task.meta()
+            meta = task.meta
             info("Running %d / %d %s"%(count, total, task))
             task.build_started()
-            tmpdir = task.meta().get('T')
+            tmpdir = task.meta.get('T')
             logfn = "%s/%s.%s.log"%(tmpdir, task.name, str(os.getpid()))
             process = oelite.process.TaskProcess(task, logfile=logfn)
             if not self.options.fake_build:
