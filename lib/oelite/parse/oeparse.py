@@ -69,6 +69,7 @@ class OEParser(object):
                      | def_func
                      | addtask NEWLINE
                      | addhook NEWLINE
+                     | prefer NEWLINE
                      | COMMENT'''
         return
 
@@ -416,6 +417,79 @@ class OEParser(object):
         p[0] = [ p[1] ] + p[2]
         return
 
+
+    def p_prefer_recipe(self, p):
+        '''prefer : PREFER recipe maybe_layer maybe_version'''
+        self.meta.set_preference(recipe=p[2], layer=p[3], version=p[4])
+        return
+
+    def p_prefer_package(self, p):
+        '''prefer : PREFER packages maybe_recipe maybe_layer maybe_version'''
+        self.meta.set_preference(packages=p[2], recipe=p[3], layer=p[4],
+                                 version=p[5])
+        return
+
+    def p_recipe(self, p):
+        '''recipe : RECIPE RECIPENAME'''
+        p[0] = p[2]
+        return
+
+    def p_maybe_recipe1(self, p):
+        '''maybe_recipe : '''
+        p[0] = None
+        return
+
+    def p_maybe_recipe2(self, p):
+        '''maybe_recipe : recipe'''
+        p[0] = p[1]
+        return
+
+    def p_layer(self, p):
+        '''layer : LAYER LAYERNAME'''
+        p[0] = p[2]
+        return
+
+    def p_maybe_layer1(self, p):
+        '''maybe_layer : '''
+        p[0] = None
+        return
+
+    def p_maybe_layer2(self, p):
+        '''maybe_layer : layer'''
+        p[0] = p[1]
+        return
+
+    def p_version(self, p):
+        '''version : VERSION VERSIONNAME'''
+        p[0] = p[2]
+        return
+
+    def p_maybe_version1(self, p):
+        '''maybe_version : '''
+        p[0] = None
+        return
+
+    def p_maybe_version2(self, p):
+        '''maybe_version : version'''
+        p[0] = p[1]
+        return
+
+    def p_packages(self, p):
+        '''packages : PACKAGE package'''
+        p[0] = p[2]
+        return
+
+    def p_package1(self, p):
+        '''package : PACKAGENAME'''
+        p[0] = [ p[1] ]
+        return
+
+    def p_packages2(self, p):
+        '''package : PACKAGENAME package'''
+        p[0] = [ p[1] ] + p[2]
+        return
+
+
     def p_func(self, p):
         '''func : VARNAME FUNCSTART func_body FUNCSTOP'''
         self.meta.set(p[1], p[3])
@@ -561,10 +635,13 @@ class OEParser(object):
                 file_split = os.path.basename(filename[:-3]).split("_")
                 if len(file_split) > 3:
                     raise Exception("Invalid recipe filename: %s"%(filename))
+                self.meta.set("RECIPE_NAME", file_split[0])
                 self.meta.set("PN", file_split[0])
                 if len(file_split) > 1:
+                    self.meta.set("RECIPE_VERSION", file_split[1])
                     self.meta.set("PV", file_split[1])
                 else:
+                    self.meta.set("RECIPE_VERSION", "0")
                     self.meta.set("PV", "0")
 
         # FIXME: write lock file to safeguard against race condition

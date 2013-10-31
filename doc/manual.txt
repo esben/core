@@ -55,8 +55,8 @@ include::depends.txt[]
 
 // USE Flags
 include::useflags.txt[]
-//// adding a use flag to a recipe
-//// setting a use flag (in machine or distro config)
+// adding a use flag to a recipe
+// setting a use flag (in machine or distro config)
 
 // Manifest Commands
 include::commands.txt[]
