@@ -8,6 +8,9 @@ import logging
 log = logging.getLogger()
 
 
+# TODO: reorder MetaVar constructor: scope, name, value
+# Normally, name is to be given, and specifcying name first seems natural.
+
 # TODO: MetaData.clone()
 
 # TODO: MetaPythonFunc() class
@@ -114,9 +117,8 @@ class MetaVar(object):
                 if self.override_if.has_key(override):
                     value = self.override_if[override]
                     break
-        # FIXME: implement prepend_if and append_if handling
-        # if isinstance(self, MetaSequence):
-        #     value = self.amend_if(value)
+        if isinstance(self, MetaSequence):
+             value = self.amend_if(value)
         if self.name is not None:
             self.scope.cache(self.name, value)
         return value
@@ -204,6 +206,33 @@ class MetaString(MetaSequence):
                             type(amend_value), type(value), self))
         return value
 
+    def amend_if(self, value):
+        if self.prepend_if:
+            for override in self.scope['OVERRIDES']:
+                if self.prepend_if.has_key(override):
+                    amend_value = self.prepend_if[override]
+                    if isinstance(amend_value, MetaVar):
+                        amend_value = amend_value.get()
+                    if isinstance(amend_value, self.basetype):
+                        value = amend_value + value
+                    else:
+                        raise TypeError(
+                            "unsupported prepend_if operation: %s to %s"%(
+                                type(amend_value), type(value)))
+        if self.append_if:
+            for override in self.scope['OVERRIDES']:
+                if self.append_if.has_key(override):
+                    amend_value = self.append_if[override]
+                    if isinstance(amend_value, MetaVar):
+                        amend_value = amend_value.get()
+                    if isinstance(amend_value, self.basetype):
+                        value += amend_value
+                    else:
+                        raise TypeError(
+                            "unsupported append_if operation: %s to %s"%(
+                                type(amend_value), type(value)))
+        return value
+
     @classmethod
     def eval(cls, value):
         # FIXME: do ${VARIABLE_NAME} style expansion here
@@ -264,6 +293,38 @@ class MetaList(MetaSequence):
                     raise TypeError(
                         "unsupported append operation: %s to %s: %r"%(
                             type(amend_value), type(value), self))
+        return value
+
+    def amend_if(self, value):
+        value = copy.copy(value)
+        if self.prepend_if:
+            for override in self.scope['OVERRIDES']:
+                if self.prepend_if.has_key(override):
+                    amend_value = self.prepend_if[override]
+                    if isinstance(amend_value, MetaVar):
+                        amend_value = amend_value.get()
+                    if isinstance(amend_value, self.basetype):
+                        value = amend_value + value
+                    elif isinstance(amend_value, basestring):
+                        value = self.split_str(amend_value) + value
+                    else:
+                        raise TypeError(
+                            "unsupported prepend_if operation: %s to %s"%(
+                                type(amend_value), type(value)))
+        if self.append_if:
+            for override in self.scope['OVERRIDES']:
+                if self.append_if.has_key(override):
+                    amend_value = self.append_if[override]
+                    if isinstance(amend_value, MetaVar):
+                        amend_value = amend_value.get()
+                    if isinstance(amend_value, self.basetype):
+                        value += amend_value
+                    elif isinstance(amend_value, basestring):
+                        value += self.split_str(amend_value)
+                    else:
+                        raise TypeError(
+                            "unsupported append_if operation: %s to %s"%(
+                                type(amend_value), type(value)))
         return value
 
     def __add__(self, other):
@@ -580,6 +641,60 @@ class TestMetaVar(unittest.TestCase):
         VAR.override_if['USE_foo'] = 'foo'
         VAR.override_if['USE_bar'] = 'bar'
         self.assertEqual(VAR.get(), 'foo')
+
+    def test_string_prepend_if_1(self):
+        d = MetaData()
+        VAR = MetaVar(d, 'bar')
+        MetaVar(d, ['USE_foo'], 'OVERRIDES')
+        VAR.prepend_if['USE_foo'] = 'foo'
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_string_prepend_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, 'x')
+        MetaVar(d, ['USE_bar', 'USE_foo'], 'OVERRIDES')
+        VAR.prepend_if['USE_foo'] = 'foo'
+        VAR.prepend_if['USE_bar'] = 'bar'
+        self.assertEqual(VAR.get(), 'foobarx')
+
+    def test_string_append_if_1(self):
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
+        MetaVar(d, ['USE_bar'], 'OVERRIDES')
+        VAR.append_if['USE_bar'] = 'bar'
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_string_append_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, 'x')
+        MetaVar(d, ['USE_foo', 'USE_bar'], 'OVERRIDES')
+        VAR.append_if['USE_foo'] = 'foo'
+        VAR.append_if['USE_bar'] = 'bar'
+        self.assertEqual(VAR.get(), 'xfoobar')
+
+    def test_string_append_metastring_1(self):
+        d = MetaData()
+        VAR = MetaVar(d, 'x')
+        MetaVar(d, ['USE_foo', 'USE_bar'], 'OVERRIDES')
+        VAR.append_if['USE_foo'] = MetaVar(d, 'foo')
+        self.assertEqual(VAR.get(), 'xfoo')
+
+    def test_string_append_metastring_1_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, 'x')
+        MetaVar(d, ['USE_foo', 'USE_bar'], 'OVERRIDES')
+        a = MetaVar(d, 'foo')
+        a += 'bar'
+        VAR.append_if['USE_foo'] = a
+        self.assertEqual(VAR.get(), 'xfoobar')
+
+    def test_string_append_metastring_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, 'x')
+        MetaVar(d, ['USE_foo', 'USE_bar'], 'OVERRIDES')
+        VAR.append_if['USE_foo'] = MetaVar(d, 'foo')
+        VAR.append_if['USE_bar'] = MetaVar(d, 'bar')
+        self.assertEqual(VAR.get(), 'xfoobar')
 
 if __name__ == '__main__':
     logging.basicConfig()
