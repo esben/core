@@ -7,19 +7,52 @@ import copy
 import logging
 log = logging.getLogger()
 
-class MetaData(object):
+
+# TODO: MetaData() class that derives from dict and includes eval cache, json
+# dump, and more ...
+
+# TODO: MetaData.clone()
+
+# TODO: MetaPythonFunc() class
+
+# TODO: MetaShellFunc() class
+
+# FIXME: ensure that FOO.append(BAR) does immediate BAR.get(), as it would
+# otherwise be difficult to implement MetaData.clone().
+
+# TODO: extend MetaList so that MetaList.set('foo bar') will do the same as
+# MetaList(['foo', 'bar'])
+
+
+class MetaDataEval(object):
 
     def __init__(self):
-        self.overrides = []
+        pass
+
+    def clean(self, var):
+        pass
+
+
+class MetaData(dict):
+
+    def __init__(self):
+        self.eval = MetaDataEval()
+        dict.__init__(self)
+
+    def __setitem__(self, key, val):
+        self.eval.clean(key)
+        dict.__setitem__(self, key, val)
+
+    def __getitem__(self, key):
+        var = dict.__getitem__(self, key)
+        return val
 
 
 class MetaVar(object):
 
-    __slots__ = [ 'value', 'name', 'override_if', ]
+    __slots__ = [ 'scope', 'name', 'value', 'override_if', ]
 
-    def __new__(cls, value=None):
-        if isinstance(value, MetaVar):
-            value = value.get()
+    def __new__(cls, value=None, scope=None, name=None):
         if isinstance(value, basestring):
             return super(MetaVar, cls).__new__(MetaString)
         elif isinstance(value, list):
@@ -33,8 +66,16 @@ class MetaVar(object):
         else:
             return super(MetaVar, cls).__new__(MetaString)
 
-    def __init__(self, value=None):
+    def __init__(self, value=None, scope=None, name=None):
+        if isinstance(value, MetaVar):
+            value = value.get()
+        if name is not None:
+            self.scope[name] = self
         self.value = value
+        assert not (name is not None and scope is None)
+        assert scope is None or isinstance(scope, MetaData)
+        self.scope = scope
+        self.name = name
         self.override_if = {}
 
     def __repr__(self):
@@ -76,12 +117,12 @@ class MetaSequence(MetaVar):
     __slots__ = [ 'prepend', 'append', 'prepends', 'appends',
                   'prepend_if', 'append_if' ]
 
-    def __init__(self, value=None):
+    def __init__(self, value=None, scope=None, name=None):
         self.prepends = []
         self.prepend_if = {}
         self.appends = []
         self.append_if = {}
-        super(MetaSequence, self).__init__(value)
+        super(MetaSequence, self).__init__(value, scope, name)
 
     def __getitem__(self, index):
         return self.get().__getitem__(index)
@@ -230,10 +271,6 @@ class MetaList(MetaSequence):
 
 class MetaMap(MetaVar):
 
-    def __init__(self, value=None):
-        super(MetaMap, self).__init__(value, name)
-        pass
-
     def __setitem__(self, key, value):
         self.value[key] = value
 
@@ -273,6 +310,11 @@ class TestMetaVar(unittest.TestCase):
     def test_init_default(self):
         VAR = MetaVar()
         self.assertIsInstance(VAR, MetaString)
+
+    def test_init_metavar(self):
+        FOO = MetaVar('')
+        BAR = MetaVar(FOO)
+        self.assertIsInstance(BAR, MetaString)
 
     def test_init_string(self):
         VAR = MetaVar('foo')
