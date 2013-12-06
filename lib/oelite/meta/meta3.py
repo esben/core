@@ -8,51 +8,57 @@ import logging
 log = logging.getLogger()
 
 
-# TODO: MetaData() class that derives from dict and includes eval cache, json
-# dump, and more ...
-
 # TODO: MetaData.clone()
 
 # TODO: MetaPythonFunc() class
 
 # TODO: MetaShellFunc() class
 
-# FIXME: ensure that FOO.append(BAR) does immediate BAR.get(), as it would
-# otherwise be difficult to implement MetaData.clone().
 
-# TODO: extend MetaList so that MetaList.set('foo bar') will do the same as
-# MetaList(['foo', 'bar'])
-
-
-class MetaDataEval(object):
-
-    def __init__(self):
-        pass
-
-    def clean(self, var):
-        pass
+class MetaDataCacheMiss(Exception):
+    pass
 
 
 class MetaData(dict):
 
     def __init__(self):
-        self.eval = MetaDataEval()
         dict.__init__(self)
+        MetaList(self, [], 'OVERRIDES')
+        self._cache = {}
 
     def __setitem__(self, key, val):
-        self.eval.clean(key)
+        self.clean(key)
         dict.__setitem__(self, key, val)
 
     def __getitem__(self, key):
         var = dict.__getitem__(self, key)
-        return val
+        return var
+
+    def eval(self, value):
+        if isinstance(value, types.CodeType):
+            value = eval(value, {}, self)
+        if isinstance(value, MetaVar):
+            value = value.get()
+        return value
+
+    def cache(self, var, value):
+        self._cache[var] = value
+
+    def get_cached(self, var):
+        try:
+            return self._cache[var]
+        except KeyError:
+            raise MetaDataCacheMiss(var)
+
+    def clean(self, var):
+        pass
 
 
 class MetaVar(object):
 
     __slots__ = [ 'scope', 'name', 'value', 'override_if', ]
 
-    def __new__(cls, value=None, scope=None, name=None):
+    def __new__(cls, scope, value=None, name=None):
         if isinstance(value, basestring):
             return super(MetaVar, cls).__new__(MetaString)
         elif isinstance(value, list):
@@ -66,16 +72,15 @@ class MetaVar(object):
         else:
             return super(MetaVar, cls).__new__(MetaString)
 
-    def __init__(self, value=None, scope=None, name=None):
+    def __init__(self, scope, value=None, name=None):
         if isinstance(value, MetaVar):
             value = value.get()
-        if name is not None:
-            self.scope[name] = self
         self.value = value
-        assert not (name is not None and scope is None)
-        assert scope is None or isinstance(scope, MetaData)
+        assert isinstance(scope, MetaData)
         self.scope = scope
         self.name = name
+        if name is not None:
+            self.scope[name] = self
         self.override_if = {}
 
     def __repr__(self):
@@ -84,31 +89,36 @@ class MetaVar(object):
     def __str__(self):
         return str(self.get())
 
-    @classmethod
-    def eval(cls, value):
-        if isinstance(value, types.CodeType):
-            value = eval(value)
-        if isinstance(value, cls):
-            value = value.get()
-        return value
-
     def set(self, value):
+        if isinstance(value, MetaVar):
+            value = value.get()
+        if not (isinstance(value, self.basetype) or
+                isinstance(value, types.CodeType)):
+            raise TypeError("cannot set %r object to %s value"%(
+                    self, type(value)))
         self.value = value
 
-    def get(self, evaluate=True, override=True, amend=True):
-        assert not ((amend or override) and not evaluate)
-        assert not (override and not amend)
-        value = self.value
-        if evaluate:
-            value = self.eval(value)
+    def get(self):
+        if self.name is not None:
+            try:
+                return self.scope.get_cached(self.name)
+            except MetaDataCacheMiss:
+                pass
+        value = self.scope.eval(self.value)
         if not isinstance(value, self.basetype):
             raise TypeError("invalid type %s in %r"%(type(value), self))
-        if amend and isinstance(self, MetaSequence):
+        if isinstance(self, MetaSequence):
             value = self.amend(value)
-        # FIXME: implement override_if
+        if self.override_if:
+            for override in self.scope['OVERRIDES']:
+                if self.override_if.has_key(override):
+                    value = self.override_if[override]
+                    break
         # FIXME: implement prepend_if and append_if handling
-        # if amend and isinstance(self, MetaSequence):
+        # if isinstance(self, MetaSequence):
         #     value = self.amend_if(value)
+        if self.name is not None:
+            self.scope.cache(self.name, value)
         return value
 
 
@@ -117,12 +127,12 @@ class MetaSequence(MetaVar):
     __slots__ = [ 'prepend', 'append', 'prepends', 'appends',
                   'prepend_if', 'append_if' ]
 
-    def __init__(self, value=None, scope=None, name=None):
+    def __init__(self, scope, value=None, name=None):
         self.prepends = []
         self.prepend_if = {}
         self.appends = []
         self.append_if = {}
-        super(MetaSequence, self).__init__(value, scope, name)
+        super(MetaSequence, self).__init__(scope, value, name)
 
     def __getitem__(self, index):
         return self.get().__getitem__(index)
@@ -139,15 +149,14 @@ class MetaSequence(MetaVar):
     def count(self, sub, start=None, end=None):
         return self.get().count(sub, start, end)
 
-    def set(self, value):
-        self.value = value
-        self.prepends = []
-        self.appends = []
-
     def prepend(self, value):
+        if isinstance(value, MetaVar):
+            value = value.get()
         self.prepends.append(value)
 
     def append(self, value):
+        if isinstance(value, MetaVar):
+            value = value.get()
         self.appends.append(value)
 
     def __add__(self, other):
@@ -159,17 +168,10 @@ class MetaSequence(MetaVar):
                 "cannot concatenate %s and %s objects"%(
                     type(self), type(other)))
         value += other
-        return MetaVar(value)
+        return MetaVar(self.scope, value)
 
     def set(self, value):
-        if isinstance(value, type(self)):
-            value = value.get()
-        if isinstance(value, types.CodeType):
-            pass
-        elif not isinstance(value, self.basetype):
-            raise TypeError("cannot set %r object to %s value"%(
-                    self, type(value)))
-        self.value = value
+        super(MetaSequence, self).set(value)
         self.prepends = []
         self.appends = []
 
@@ -185,7 +187,7 @@ class MetaString(MetaSequence):
 
     def amend(self, value):
         if self.prepends:
-            for amend_value in map(self.eval, self.prepends):
+            for amend_value in map(self.scope.eval, self.prepends):
                 if isinstance(amend_value, self.basetype):
                     value = amend_value + value
                 else:
@@ -193,7 +195,7 @@ class MetaString(MetaSequence):
                         "unsupported prepend operation: %s to %s: %r"%(
                             type(amend_value), type(value), self))
         if self.appends:
-            for amend_value in map(self.eval, self.appends):
+            for amend_value in map(self.scope.eval, self.appends):
                 if isinstance(amend_value, self.basetype):
                     value += amend_value
                 else:
@@ -204,14 +206,13 @@ class MetaString(MetaSequence):
 
     @classmethod
     def eval(cls, value):
-        value = super(MetaString, cls).eval(value)
         # FIXME: do ${VARIABLE_NAME} style expansion here
         return value
 
 
 class MetaList(MetaSequence):
 
-    __slots__ = [ 'ifs' ]
+    __slots__ = [ 'separator' ]
 
     basetype = list
 
@@ -224,28 +225,41 @@ class MetaList(MetaSequence):
     def __reversed__(self):
         return self.get().__reversed__()
 
+    def split_str(self, value):
+        ifs = getattr(self, 'separator', ' \t\n')
+        return re.split('[%s]+'%(ifs), string.strip(value, ifs))
+        
+    def set(self, value):
+        if isinstance(value, MetaVar):
+            value = value.get()
+        if isinstance(value, basestring):
+            value = self.split_str(value)
+        if not (isinstance(value, self.basetype) or
+                isinstance(value, types.CodeType)):
+            raise TypeError("cannot set %r object to %s value"%(
+                    self, type(value)))
+        self.value = value
+        self.prepends = []
+        self.appends = []
+
     def amend(self, value):
         value = copy.copy(value)
         if self.prepends:
-            for amend_value in map(self.eval, self.prepends):
+            for amend_value in map(self.scope.eval, self.prepends):
                 if isinstance(amend_value, self.basetype):
                     value = amend_value + value
                 elif isinstance(amend_value, basestring):
-                    ifs = getattr(self, 'ifs', ' \t\n')
-                    value = re.split(
-                        '[%s]+'%(ifs), string.strip(amend_value, ifs)) + value
+                    value = self.split_str(amend_value) + value
                 else:
                     raise TypeError(
                         "unsupported prepend operation: %s to %s: %r"%(
                             type(amend_value), type(value), self))
         if self.appends:
-            for amend_value in map(self.eval, self.appends):
+            for amend_value in map(self.scope.eval, self.appends):
                 if isinstance(amend_value, self.basetype):
                     value += amend_value
                 elif isinstance(amend_value, basestring):
-                    ifs = getattr(self, 'ifs', ' \t\n')
-                    value += re.split(
-                        '[%s]+'%(ifs), string.strip(amend_value, ifs))
+                    value += self.split_str(amend_value)
                 else:
                     raise TypeError(
                         "unsupported append operation: %s to %s: %r"%(
@@ -266,7 +280,7 @@ class MetaList(MetaSequence):
                 "cannot concatenate %s and %s objects"%(
                     type(self), type(other)))
         value += other
-        return MetaVar(value)
+        return MetaVar(self.scope, value)
 
 
 class MetaMap(MetaVar):
@@ -308,200 +322,242 @@ class TestMetaVar(unittest.TestCase):
         pass
 
     def test_init_default(self):
-        VAR = MetaVar()
+        d = MetaData()
+        VAR = MetaVar(d)
         self.assertIsInstance(VAR, MetaString)
 
     def test_init_metavar(self):
-        FOO = MetaVar('')
-        BAR = MetaVar(FOO)
+        d = MetaData()
+        FOO = MetaVar(d, '')
+        BAR = MetaVar(d, FOO)
         self.assertIsInstance(BAR, MetaString)
 
     def test_init_string(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         self.assertIsInstance(VAR, MetaString)
 
     def test_init_list(self):
-        VAR = MetaVar([42])
+        d = MetaData()
+        VAR = MetaVar(d, [42])
         self.assertIsInstance(VAR, MetaList)
 
     def test_set_get_string(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         VAR.set('bar')
         self.assertEqual(VAR.get(), 'bar')
 
     def test_set_string_list(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         self.assertRaises(TypeError, VAR.set, (['bar']))
 
     def test_set_get_list(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.set(['bar'])
         self.assertEqual(VAR.get(), ['bar'])
 
     def test_set_list_string(self):
-        VAR = MetaVar(['foo'])
-        self.assertRaises(TypeError, VAR.set, ('bar'))
+        d = MetaData()
+        VAR = MetaVar(d, [])
+        VAR.set(' foo bar ')
+        self.assertEqual(VAR.get(), ['foo', 'bar'])
+
+    def test_set_list_bool(self):
+        d = MetaData()
+        VAR = MetaVar(d, [])
+        self.assertRaises(TypeError, VAR.set, ({}))
 
     def test_prepend_string_1(self):
-        VAR = MetaVar('bar')
+        d = MetaData()
+        VAR = MetaVar(d, 'bar')
         VAR.prepend('foo')
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_prepend_string_2(self):
-        VAR = MetaVar('bar')
+        d = MetaData()
+        VAR = MetaVar(d, 'bar')
         VAR.prepend('foo')
         VAR.prepend('x')
         self.assertEqual(VAR.get(), 'xfoobar')
 
     def test_append_string_1(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         VAR.append('bar')
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_append_string_2(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         VAR.append('bar')
         VAR.append('x')
         self.assertEqual(VAR.get(), 'foobarx')
 
     def test_prepend_list_1(self):
-        VAR = MetaVar(['bar'])
+        d = MetaData()
+        VAR = MetaVar(d, ['bar'])
         VAR.prepend(['foo'])
         self.assertEqual(VAR.get(), ['foo', 'bar'])
 
     def test_prepend_list_2(self):
-        VAR = MetaVar(['bar'])
+        d = MetaData()
+        VAR = MetaVar(d, ['bar'])
         VAR.prepend(['foo'])
         VAR.prepend(['x'])
         self.assertEqual(VAR.get(), ['x', 'foo', 'bar'])
 
     def test_append_list_1(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.append(['bar'])
         self.assertEqual(VAR.get(), ['foo', 'bar'])
 
     def test_append_list_2(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.append(['bar'])
         VAR.append(['x'])
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
 
     def test_append_list_3(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.append(['bar', 'x', 'y'])
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x', 'y'])
 
     def test_append_list_string_1(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.append('bar')
         self.assertEqual(VAR.get(), ['foo', 'bar'])
 
     def test_append_list_string_2(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.append('bar x')
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
 
     def test_append_list_string_2_space(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.append(' bar    x ')
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
 
     def test_append_list_string_2_tab(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.append('\tbar\tx\t')
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
 
     def test_append_list_string_2_newline(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR.append('\nbar\nx\n')
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
 
     def test_string_add_str(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         VAR += 'bar'
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_string_add_string(self):
-        VAR = MetaVar('foo')
-        VAR += MetaVar('bar')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
+        VAR += MetaVar(d, 'bar')
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_string_add_self(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         VAR += VAR
         self.assertEqual(VAR.get(), 'foofoo')
 
     def test_string_add_3(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         ADDED = VAR + VAR + VAR
         self.assertEqual(ADDED.get(), 'foofoofoo')
 
     def test_string_add_3_mixed(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         ADDED = VAR + 'bar' + VAR
         self.assertEqual(ADDED.get(), 'foobarfoo')
 
     def test_list_add_str(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR += 'bar'
         self.assertEqual(VAR.get(), ['foo', 'bar'])
 
     def test_list_add_list_2(self):
-        VAR = MetaVar(['foo'])
+        d = MetaData()
+        VAR = MetaVar(d, ['foo'])
         VAR += ['bar', 'x']
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
 
     def test_string_invalid_attribute(self):
-        VAR = MetaVar('')
+        d = MetaData()
+        VAR = MetaVar(d, '')
         with self.assertRaises(AttributeError):
             VAR.foo = 'bar'
 
     def test_list_invalid_attribute(self):
-        VAR = MetaVar([])
+        d = MetaData()
+        VAR = MetaVar(d, [])
         with self.assertRaises(AttributeError):
             VAR.foo = 'bar'
 
     def test_set_code(self):
-        VAR = MetaVar()
+        d = MetaData()
+        VAR = MetaVar(d)
         VAR.set(compile('"foo" + "bar"', '<code>', 'eval'))
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_prepend_code(self):
-        VAR = MetaVar('bar')
+        d = MetaData()
+        VAR = MetaVar(d, 'bar')
         VAR.prepend(compile('"foo"', '<code>', 'eval'))
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_append_code(self):
-        VAR = MetaVar('foo')
+        d = MetaData()
+        VAR = MetaVar(d, 'foo')
         VAR.append(compile('"bar"', '<code>', 'eval'))
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_set_code_with_metavars(self):
-        global FOO, BAR
-        FOO = MetaVar('foo')
-        BAR = MetaVar('bar')
-        VAR = MetaVar()
+        d = MetaData()
+        MetaVar(d, 'foo', 'FOO')
+        MetaVar(d, 'bar', 'BAR')
+        VAR = MetaVar(d)
         VAR.set(compile('FOO + " " + BAR', '<code>', 'eval'))
         value = VAR.get()
-        del FOO, BAR
         self.assertEqual(value, 'foo bar')
 
     def test_string_iter(self):
-        VAR = MetaVar('foobar')
+        d = MetaData()
+        VAR = MetaVar(d, 'foobar')
         value = ''
         for c in VAR:
             value += c
         self.assertEqual(value, 'foobar')
 
     def test_list_iter(self):
-        VAR = MetaVar([1,2,3])
+        d = MetaData()
+        VAR = MetaVar(d, [1,2,3])
         sum = 0
         for i in VAR:
             sum += i
         self.assertEqual(sum, 6)
 
     def test_list_iter_reversed(self):
-        VAR = MetaVar([1,2,3])
+        d = MetaData()
+        VAR = MetaVar(d, [1,2,3])
         value = None
         for i in reversed(VAR):
             if value is None:
@@ -509,6 +565,21 @@ class TestMetaVar(unittest.TestCase):
             else:
                 value = value - i
         self.assertEqual(value, 0)
+
+    def test_string_override_1(self):
+        d = MetaData()
+        VAR = MetaVar(d, 'bar')
+        MetaVar(d, ['USE_foo'], 'OVERRIDES')
+        VAR.override_if['USE_foo'] = 'foo'
+        self.assertEqual(VAR.get(), 'foo')
+
+    def test_string_override_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, '')
+        MetaVar(d, ['USE_foo', 'USE_bar'], 'OVERRIDES')
+        VAR.override_if['USE_foo'] = 'foo'
+        VAR.override_if['USE_bar'] = 'bar'
+        self.assertEqual(VAR.get(), 'foo')
 
 if __name__ == '__main__':
     logging.basicConfig()
