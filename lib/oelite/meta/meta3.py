@@ -2,68 +2,101 @@ import sys
 import string
 import re
 import types
+import copy
 
 import logging
 log = logging.getLogger()
 
+class MetaData(object):
 
-class MetaVariable(object):
+    def __init__(self):
+        self.overrides = []
 
 
-    # FIXME: __slots__ = [ 'value', 'prepend', 'append', 'override_if',
-    # 'prepend_if', 'append_if', 'ifs', ... ]
+class MetaVar(object):
 
-    def __init__(self, name, value=None):
-        self.__name__ = name
+    __slots__ = [ 'value', 'name', 'override_if', ]
+
+    def __new__(cls, value=None):
+        if isinstance(value, MetaVar):
+            value = value.get()
+        if isinstance(value, basestring):
+            return super(MetaVar, cls).__new__(MetaString)
+        elif isinstance(value, list):
+            return super(MetaVar, cls).__new__(MetaList)
+        elif isinstance(value, dict):
+            return super(MetaVar, cls).__new__(MetaMap)
+        elif isinstance(value, int):
+            return super(MetaVar, cls).__new__(MetaInt)
+        elif isinstance(value, bool):
+            return super(MetaVar, cls).__new__(MetaBool)
+        else:
+            return super(MetaVar, cls).__new__(MetaString)
+
+    def __init__(self, value=None):
         self.value = value
-        self.prepends = []
-        self.appends = []
-        #if value is not None:
-        #    self.type = type(value)
-        #else:
-        #    self.type = None
         self.override_if = {}
-        self.prepend_if = {}
-        self.append_if = {}
-
 
     def __repr__(self):
-        return '%s(%s)'%(self.__class__.__name__, self.__name__)
+        return '%s(%r)'%(self.__class__.__name__, self.get())
 
     def __str__(self):
         return str(self.get())
 
-
-    def __setitem__(self, key, value): # required by MutableMapping
-        assert isinstance(self.value, dict)
-        self.value[key] = value
-
-    def __delitem__(self, key): # required by MutableMapping
-        assert isinstance(self.value, dict)
-        del self.value[key]
-
-    def __getitem__(self, key): # required by Mapping
-        assert isinstance(self.value, dict)
-        return self.value[key] # FIXME: need to do something with the value
-                               # returned, ie. eval/expansion...  Better
-                               # return the evaluated/expanded value here, and
-                               # provide custom access functions for getting
-                               # raw values for those special situation where
-                               # that might be needed.
-
-    def __contains__(self, item): # required by Container
-        # FIXME: not implemented
-        pass
-
-
-    def __eval__(self, value):
-        print '__eval__', value
+    @classmethod
+    def eval(cls, value):
         if isinstance(value, types.CodeType):
             value = eval(value)
-        if isinstance(value, MetaVariable):
+        if isinstance(value, cls):
             value = value.get()
         return value
 
+    def set(self, value):
+        self.value = value
+
+    def get(self, evaluate=True, override=True, amend=True):
+        assert not ((amend or override) and not evaluate)
+        assert not (override and not amend)
+        value = self.value
+        if evaluate:
+            value = self.eval(value)
+        if not isinstance(value, self.basetype):
+            raise TypeError("invalid type %s in %r"%(type(value), self))
+        if amend and isinstance(self, MetaSequence):
+            value = self.amend(value)
+        # FIXME: implement override_if
+        # FIXME: implement prepend_if and append_if handling
+        # if amend and isinstance(self, MetaSequence):
+        #     value = self.amend_if(value)
+        return value
+
+
+class MetaSequence(MetaVar):
+
+    __slots__ = [ 'prepend', 'append', 'prepends', 'appends',
+                  'prepend_if', 'append_if' ]
+
+    def __init__(self, value=None):
+        self.prepends = []
+        self.prepend_if = {}
+        self.appends = []
+        self.append_if = {}
+        super(MetaSequence, self).__init__(value)
+
+    def __getitem__(self, index):
+        return self.get().__getitem__(index)
+
+    def __len__(self):
+        return self.get().__len__()
+
+    def __contains__(self, item):
+        return self.get().__contains__(item)
+
+    def index(self, sub, start=None, end=None):
+        return self.get().index(sub, start, end)
+
+    def count(self, sub, start=None, end=None):
+        return self.get().count(sub, start, end)
 
     def set(self, value):
         self.value = value
@@ -76,21 +109,87 @@ class MetaVariable(object):
     def append(self, value):
         self.appends.append(value)
 
+    def __add__(self, other):
+        value = self.get()
+        if isinstance(other, type(self)):
+            other = other.get()
+        elif not isinstance(other, self.basetype):
+            raise TypeError(
+                "cannot concatenate %s and %s objects"%(
+                    type(self), type(other)))
+        value += other
+        return MetaVar(value)
 
-    def get(self, evaluate=True, override=True, amend=True):
-        assert not ((amend or override) and not evaluate)
-        value = self.value
-        if evaluate:
-            value = self.__eval__(value)
-        if amend and self.prepends:
-            if not type(value) in (str, list):
-                raise TypeError(
-                    "prepend to %s not supported: %r"%(type(value), self))
-            for amend_value in map(self.__eval__, self.prepends):
-                if type(value) == type(amend_value):
+    def set(self, value):
+        if isinstance(value, type(self)):
+            value = value.get()
+        if isinstance(value, types.CodeType):
+            pass
+        elif not isinstance(value, self.basetype):
+            raise TypeError("cannot set %r object to %s value"%(
+                    self, type(value)))
+        self.value = value
+        self.prepends = []
+        self.appends = []
+
+
+class MetaString(MetaSequence):
+
+    __slots__ = []
+
+    basetype = basestring
+
+    def __str__(self):
+        return self.get()
+
+    def amend(self, value):
+        if self.prepends:
+            for amend_value in map(self.eval, self.prepends):
+                if isinstance(amend_value, self.basetype):
                     value = amend_value + value
-                elif (isinstance(value, list) and
-                      isinstance(amend_value, str)):
+                else:
+                    raise TypeError(
+                        "unsupported prepend operation: %s to %s: %r"%(
+                            type(amend_value), type(value), self))
+        if self.appends:
+            for amend_value in map(self.eval, self.appends):
+                if isinstance(amend_value, self.basetype):
+                    value += amend_value
+                else:
+                    raise TypeError(
+                        "unsupported append operation: %s to %s: %r"%(
+                            type(amend_value), type(value), self))
+        return value
+
+    @classmethod
+    def eval(cls, value):
+        value = super(MetaString, cls).eval(value)
+        # FIXME: do ${VARIABLE_NAME} style expansion here
+        return value
+
+
+class MetaList(MetaSequence):
+
+    __slots__ = [ 'ifs' ]
+
+    basetype = list
+
+    def __str__(self):
+        return str(self.get())
+
+    def __iter__(self):
+        return self.get().__iter__()
+
+    def __reversed__(self):
+        return self.get().__reversed__()
+
+    def amend(self, value):
+        value = copy.copy(value)
+        if self.prepends:
+            for amend_value in map(self.eval, self.prepends):
+                if isinstance(amend_value, self.basetype):
+                    value = amend_value + value
+                elif isinstance(amend_value, basestring):
                     ifs = getattr(self, 'ifs', ' \t\n')
                     value = re.split(
                         '[%s]+'%(ifs), string.strip(amend_value, ifs)) + value
@@ -98,15 +197,11 @@ class MetaVariable(object):
                     raise TypeError(
                         "unsupported prepend operation: %s to %s: %r"%(
                             type(amend_value), type(value), self))
-        if amend and self.appends:
-            if not type(value) in (str, list):
-                raise TypeError(
-                    "append to %s not supported: %r"%(type(value), self))
-            for amend_value in map(self.__eval__, self.appends):
-                if type(value) == type(amend_value):
+        if self.appends:
+            for amend_value in map(self.eval, self.appends):
+                if isinstance(amend_value, self.basetype):
                     value += amend_value
-                elif (isinstance(value, list) and
-                      isinstance(amend_value, str)):
+                elif isinstance(amend_value, basestring):
                     ifs = getattr(self, 'ifs', ' \t\n')
                     value += re.split(
                         '[%s]+'%(ifs), string.strip(amend_value, ifs))
@@ -114,35 +209,266 @@ class MetaVariable(object):
                     raise TypeError(
                         "unsupported append operation: %s to %s: %r"%(
                             type(amend_value), type(value), self))
-        # FIXME: implement override_if, prepend_if, append_if handling
         return value
-
 
     def __add__(self, other):
         value = self.get()
-        if isinstance(other, MetaVariable):
+        if isinstance(other, type(self)):
             other = other.get()
-        # FIXME: return an annonymous MetaVariable instead of value
-        return value + other
+        elif isinstance(other, MetaString):
+            other = other.get()
+        if isinstance(other, basestring):
+            ifs = getattr(self, 'ifs', ' \t\n')
+            other = re.split('[%s]+'%(ifs), string.strip(other, ifs))
+        elif not isinstance(other, self.basetype):
+            raise TypeError(
+                "cannot concatenate %s and %s objects"%(
+                    type(self), type(other)))
+        value += other
+        return MetaVar(value)
 
 
-if __name__ == "__main__":
+class MetaMap(MetaVar):
+
+    def __init__(self, value=None):
+        super(MetaMap, self).__init__(value, name)
+        pass
+
+    def __setitem__(self, key, value):
+        self.value[key] = value
+
+    def __delitem__(self, key):
+        del self.value[key]
+
+    def __getitem__(self, key):
+        return self.value[key] # FIXME: need to do something with the value
+                               # returned, ie. eval/expansion...  Better
+                               # return the evaluated/expanded value here, and
+                               # provide custom access functions for getting
+                               # raw values for those special situation where
+                               # that might be needed.
+
+
+class MetaBool(MetaVar):
+
+    def __init__(self, value=None):
+        super(MetaBool, self).__init__(value, name)
+        pass
+
+
+class MetaInt(MetaVar):
+
+    def __init__(self, value=None):
+        super(MetaInt, self).__init__(value, name)
+        pass
+
+
+import unittest
+
+class TestMetaVar(unittest.TestCase):
+
+    def setUp(self):
+        pass
+
+    def test_init_default(self):
+        VAR = MetaVar()
+        self.assertIsInstance(VAR, MetaString)
+
+    def test_init_string(self):
+        VAR = MetaVar('foo')
+        self.assertIsInstance(VAR, MetaString)
+
+    def test_init_list(self):
+        VAR = MetaVar([42])
+        self.assertIsInstance(VAR, MetaList)
+
+    def test_set_get_string(self):
+        VAR = MetaVar('foo')
+        VAR.set('bar')
+        self.assertEqual(VAR.get(), 'bar')
+
+    def test_set_string_list(self):
+        VAR = MetaVar('foo')
+        self.assertRaises(TypeError, VAR.set, (['bar']))
+
+    def test_set_get_list(self):
+        VAR = MetaVar(['foo'])
+        VAR.set(['bar'])
+        self.assertEqual(VAR.get(), ['bar'])
+
+    def test_set_list_string(self):
+        VAR = MetaVar(['foo'])
+        self.assertRaises(TypeError, VAR.set, ('bar'))
+
+    def test_prepend_string_1(self):
+        VAR = MetaVar('bar')
+        VAR.prepend('foo')
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_prepend_string_2(self):
+        VAR = MetaVar('bar')
+        VAR.prepend('foo')
+        VAR.prepend('x')
+        self.assertEqual(VAR.get(), 'xfoobar')
+
+    def test_append_string_1(self):
+        VAR = MetaVar('foo')
+        VAR.append('bar')
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_append_string_2(self):
+        VAR = MetaVar('foo')
+        VAR.append('bar')
+        VAR.append('x')
+        self.assertEqual(VAR.get(), 'foobarx')
+
+    def test_prepend_list_1(self):
+        VAR = MetaVar(['bar'])
+        VAR.prepend(['foo'])
+        self.assertEqual(VAR.get(), ['foo', 'bar'])
+
+    def test_prepend_list_2(self):
+        VAR = MetaVar(['bar'])
+        VAR.prepend(['foo'])
+        VAR.prepend(['x'])
+        self.assertEqual(VAR.get(), ['x', 'foo', 'bar'])
+
+    def test_append_list_1(self):
+        VAR = MetaVar(['foo'])
+        VAR.append(['bar'])
+        self.assertEqual(VAR.get(), ['foo', 'bar'])
+
+    def test_append_list_2(self):
+        VAR = MetaVar(['foo'])
+        VAR.append(['bar'])
+        VAR.append(['x'])
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
+    def test_append_list_3(self):
+        VAR = MetaVar(['foo'])
+        VAR.append(['bar', 'x', 'y'])
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x', 'y'])
+
+    def test_append_list_string_1(self):
+        VAR = MetaVar(['foo'])
+        VAR.append('bar')
+        self.assertEqual(VAR.get(), ['foo', 'bar'])
+
+    def test_append_list_string_2(self):
+        VAR = MetaVar(['foo'])
+        VAR.append('bar x')
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
+    def test_append_list_string_2_space(self):
+        VAR = MetaVar(['foo'])
+        VAR.append(' bar    x ')
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
+    def test_append_list_string_2_tab(self):
+        VAR = MetaVar(['foo'])
+        VAR.append('\tbar\tx\t')
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
+    def test_append_list_string_2_newline(self):
+        VAR = MetaVar(['foo'])
+        VAR.append('\nbar\nx\n')
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
+    def test_string_add_str(self):
+        VAR = MetaVar('foo')
+        VAR += 'bar'
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_string_add_string(self):
+        VAR = MetaVar('foo')
+        VAR += MetaVar('bar')
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_string_add_self(self):
+        VAR = MetaVar('foo')
+        VAR += VAR
+        self.assertEqual(VAR.get(), 'foofoo')
+
+    def test_string_add_3(self):
+        VAR = MetaVar('foo')
+        ADDED = VAR + VAR + VAR
+        self.assertEqual(ADDED.get(), 'foofoofoo')
+
+    def test_string_add_3_mixed(self):
+        VAR = MetaVar('foo')
+        ADDED = VAR + 'bar' + VAR
+        self.assertEqual(ADDED.get(), 'foobarfoo')
+
+    def test_list_add_str(self):
+        VAR = MetaVar(['foo'])
+        VAR += 'bar'
+        self.assertEqual(VAR.get(), ['foo', 'bar'])
+
+    def test_list_add_list_2(self):
+        VAR = MetaVar(['foo'])
+        VAR += ['bar', 'x']
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
+    def test_string_invalid_attribute(self):
+        VAR = MetaVar('')
+        with self.assertRaises(AttributeError):
+            VAR.foo = 'bar'
+
+    def test_list_invalid_attribute(self):
+        VAR = MetaVar([])
+        with self.assertRaises(AttributeError):
+            VAR.foo = 'bar'
+
+    def test_set_code(self):
+        VAR = MetaVar()
+        VAR.set(compile('"foo" + "bar"', '<code>', 'eval'))
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_prepend_code(self):
+        VAR = MetaVar('bar')
+        VAR.prepend(compile('"foo"', '<code>', 'eval'))
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_append_code(self):
+        VAR = MetaVar('foo')
+        VAR.append(compile('"bar"', '<code>', 'eval'))
+        self.assertEqual(VAR.get(), 'foobar')
+
+    def test_set_code_with_metavars(self):
+        global FOO, BAR
+        FOO = MetaVar('foo')
+        BAR = MetaVar('bar')
+        VAR = MetaVar()
+        VAR.set(compile('FOO + " " + BAR', '<code>', 'eval'))
+        value = VAR.get()
+        del FOO, BAR
+        self.assertEqual(value, 'foo bar')
+
+    def test_string_iter(self):
+        VAR = MetaVar('foobar')
+        value = ''
+        for c in VAR:
+            value += c
+        self.assertEqual(value, 'foobar')
+
+    def test_list_iter(self):
+        VAR = MetaVar([1,2,3])
+        sum = 0
+        for i in VAR:
+            sum += i
+        self.assertEqual(sum, 6)
+
+    def test_list_iter_reversed(self):
+        VAR = MetaVar([1,2,3])
+        value = None
+        for i in reversed(VAR):
+            if value is None:
+                value = i
+            else:
+                value = value - i
+        self.assertEqual(value, 0)
+
+if __name__ == '__main__':
     logging.basicConfig()
-    FOO = MetaVariable('FOO')
-    FOO.set('foo')
-    FOO.prepend('x')
-    FOO.prepend('y')
-    FOO.append('1')
-    FOO.append('2')
-    print '%r = %r'%(FOO, FOO.get())
-    BAR = MetaVariable('BAR')
-    BAR.set(['foo'])
-    BAR.append(' hello    world ')
-    BAR.append(compile('"foo" + "bar"', '<unknown1>', 'eval'))
-    BAR.append(['and', 'some', 'more'])
-    print '%r = %r'%(BAR, BAR.get())
-    FOOBAR = MetaVariable('FOOBAR')
-    FOOBAR.set(compile('"foo" + "bar" + str(FOO)', '<unknown2>', 'eval'))
-    FOOBAR.prepend(compile('FOO + str(BAR) + FOO', '<unknown3>', 'eval'))
-    print '%r = %r'%(FOOBAR, FOOBAR.get())
-    sys.exit(0)
+    unittest.main()
+# FIXME: use coverage analysis to check for untested code
