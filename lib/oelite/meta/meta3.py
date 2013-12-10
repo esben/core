@@ -16,14 +16,12 @@ log = logging.getLogger()
 
 # TODO: add_hook() method
 
+# TODO: MetaInt
+
 # TODO: MetaDict
 
 # TODO: when doing VAR.get() on a MetaDict, all key and values that are
 # strings should be variable expanded.
-
-# TODO: MetaInt
-
-# TODO: MetaFloat
 
 # TODO: MetaPythonFunc() class
 
@@ -313,7 +311,7 @@ class MetaVar(object):
         object.__setattr__(self, name, value)
 
     def __repr__(self):
-        return '%s(%r)'%(self.__class__.__name__, self.get())
+        return '%s(%s)'%(self.__class__.__name__, self.name or '')
 
     def __str__(self):
         return str(self.get())
@@ -325,8 +323,8 @@ class MetaVar(object):
                 self.is_fixup_type(value) or
                 value is None or
                 isinstance(value, types.CodeType)):
-            raise TypeError("cannot set %r object to %s value"%(
-                    self, type(value)))
+            raise TypeError("cannot set %r to %s value"%(
+                    self, type(value).__name__))
         del self.scope.cache[self.name]
         self.value = value
 
@@ -704,6 +702,13 @@ class TestMetaData(unittest.TestCase):
         d['FOO'] = [1,2]
         self.assertIsInstance(d['FOO'], MetaList)
         self.assertEqual(d['FOO'].get(), [1,2])
+
+    def test_set_list_2(self):
+        d = MetaData()
+        d['FOO'] = [1,2]
+        d['FOO'] = [3,4]
+        self.assertIsInstance(d['FOO'], MetaList)
+        self.assertEqual(d['FOO'].get(), [3,4])
 
     def test_set_dict(self):
         d = MetaData()
