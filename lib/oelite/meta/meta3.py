@@ -8,22 +8,31 @@ import logging
 log = logging.getLogger()
 
 
-# TODO: MetaData.copy()
+# TODO: fail or warn on replace of MetaData variable.  should be using .set()
+# method always??
+
+# TODO: flatten to json support.  Write to two dicts, one with key to value,
+# and another one with key to dict of attributes.  Or one dict, with tuple of
+# (value, dict of attributes).
+
+# TODO: figure out required life-cycle model...  do we need to have
+# pickle/unpickle for parallel parse?
 
 # TODO: test if builtin filter() can be used for efficient retrieving list of
 # variables with a specific attribute set (True).
 
 # TODO: add_hook() method
 
+# TODO: MetaDict
+
 # TODO: when doing VAR.get() on a MetaDict, all key and values that are
 # strings should be variable expanded.
 
-# TODO: figure out required life-cycle model...  do we need to have
-# pickle/unpickle for parallel parse?
+# TODO: MetaInt
 
-# TODO: flatten to json support.  Write to two dicts, one with key to value,
-# and another one with key to dict of attributes.  Or one dict, with tuple of
-# (value, dict of attributes).
+# TODO: MetaFloat
+
+# TODO: MetaBool
 
 # TODO: MetaPythonFunc() class
 
@@ -31,9 +40,6 @@ log = logging.getLogger()
 
 # TODO: include task (True/False) slot/attribute in python and shell func
 # classes
-
-# TODO: warn on replace of MetaData variable?  should be using .set() method
-# always??
 
 
 class MetaDataRecursiveEval(Exception):
@@ -479,6 +485,62 @@ class MetaSequence(MetaVar):
             del self.scope.cache[self.name]
             return self.set(value)
 
+    def amend(self, value):
+        value = copy.copy(value)
+        if self.prepends:
+            for amend_value in self.prepends:
+                amend_value = self.scope.eval(amend_value)
+                if isinstance(amend_value, self.basetype):
+                    value = amend_value + value
+                elif self.is_fixup_type(amend_value):
+                    value = self.fixup(amend_value) + value
+                else:
+                    raise TypeError(
+                        "unsupported prepend operation: %s to %s"%(
+                            type(amend_value), type(value)))
+        if self.appends:
+            for amend_value in self.appends:
+                amend_value = self.scope.eval(amend_value)
+                if isinstance(amend_value, self.basetype):
+                    value += amend_value
+                elif self.is_fixup_type(amend_value):
+                    value += self.fixup(amend_value)
+                else:
+                    raise TypeError(
+                        "unsupported append operation: %s to %s"%(
+                            type(amend_value), type(value)))
+        return value
+
+    def amend_if(self, value):
+        value = copy.copy(value)
+        if self.prepend_if:
+            self.scope.stack.add_dep('OVERRIDES')
+            for override in self.scope['OVERRIDES']:
+                if self.prepend_if.has_key(override):
+                    amend_value = self.scope.eval(self.prepend_if[override])
+                    if isinstance(amend_value, self.basetype):
+                        value = amend_value + value
+                    elif self.is_fixup_type(amend_value):
+                        value = self.fixup(amend_value) + value
+                    else:
+                        raise TypeError(
+                            "unsupported prepend_if operation: %s to %s"%(
+                                type(amend_value), type(value)))
+        if self.append_if:
+            self.scope.stack.add_dep('OVERRIDES')
+            for override in self.scope['OVERRIDES']:
+                if self.append_if.has_key(override):
+                    amend_value = self.scope.eval(self.append_if[override])
+                    if isinstance(amend_value, self.basetype):
+                        value += amend_value
+                    elif self.is_fixup_type(amend_value):
+                        value += self.fixup(amend_value)
+                    else:
+                        raise TypeError(
+                            "unsupported append_if operation: %s to %s"%(
+                                type(amend_value), type(value)))
+        return value
+
 
 class MetaString(MetaSequence):
 
@@ -502,56 +564,6 @@ class MetaString(MetaSequence):
 
     def count(self, sub, start=None, end=None):
         return self.get().count(sub, start, end)
-
-    def amend(self, value):
-        if self.prepends:
-            for amend_value in self.prepends:
-                amend_value = self.scope.eval(amend_value)
-                if isinstance(amend_value, self.basetype):
-                    value = amend_value + value
-                else:
-                    raise TypeError(
-                        "unsupported prepend operation: %s to %s"%(
-                            type(amend_value), type(value)))
-        if self.appends:
-            for amend_value in self.appends:
-                amend_value = self.scope.eval(amend_value)
-                if isinstance(amend_value, self.basetype):
-                    value += amend_value
-                else:
-                    raise TypeError(
-                        "unsupported append operation: %s to %s"%(
-                            type(amend_value), type(value)))
-        return value
-
-    def amend_if(self, value):
-        if self.prepend_if:
-            self.scope.stack.add_dep('OVERRIDES')
-            for override in self.scope['OVERRIDES']:
-                if self.prepend_if.has_key(override):
-                    amend_value = self.prepend_if[override]
-                    if isinstance(amend_value, MetaVar):
-                        amend_value = amend_value.get()
-                    if isinstance(amend_value, self.basetype):
-                        value = amend_value + value
-                    else:
-                        raise TypeError(
-                            "unsupported prepend_if operation: %s to %s"%(
-                                type(amend_value), type(value)))
-        if self.append_if:
-            self.scope.stack.add_dep('OVERRIDES')
-            for override in self.scope['OVERRIDES']:
-                if self.append_if.has_key(override):
-                    amend_value = self.append_if[override]
-                    if isinstance(amend_value, MetaVar):
-                        amend_value = amend_value.get()
-                    if isinstance(amend_value, self.basetype):
-                        value += amend_value
-                    else:
-                        raise TypeError(
-                            "unsupported append_if operation: %s to %s"%(
-                                type(amend_value), type(value)))
-        return value
 
 
 class MetaList(MetaSequence):
@@ -584,64 +596,10 @@ class MetaList(MetaSequence):
         return re.split('[%s]+'%(ifs), string.strip(value, ifs))
 
     def amend(self, value):
-        value = copy.copy(value)
-        if self.prepends:
-            for amend_value in self.prepends:
-                amend_value = self.scope.eval(amend_value)
-                if isinstance(amend_value, self.basetype):
-                    value = amend_value + value
-                elif self.is_fixup_type(amend_value):
-                    value = self.fixup(amend_value) + value
-                else:
-                    raise TypeError(
-                        "unsupported prepend operation: %s to %s: %r"%(
-                            type(amend_value), type(value), self))
-        if self.appends:
-            for amend_value in self.appends:
-                amend_value = self.scope.eval(amend_value)
-                if isinstance(amend_value, self.basetype):
-                    value += amend_value
-                elif self.is_fixup_type(amend_value):
-                    value += self.fixup(amend_value)
-                else:
-                    raise TypeError(
-                        "unsupported append operation: %s to %s: %r"%(
-                            type(amend_value), type(value), self))
-        return value
+        return super(MetaList, self).amend(copy.copy(value))
 
     def amend_if(self, value):
-        value = copy.copy(value)
-        if self.prepend_if:
-            self.scope.stack.add_dep('OVERRIDES')
-            for override in self.scope['OVERRIDES']:
-                if self.prepend_if.has_key(override):
-                    amend_value = self.prepend_if[override]
-                    if isinstance(amend_value, MetaVar):
-                        amend_value = amend_value.get()
-                    if isinstance(amend_value, self.basetype):
-                        value = amend_value + value
-                    elif self.is_fixup_type(amend_value):
-                        value = self.fixup(amend_value) + value
-                    else:
-                        raise TypeError(
-                            "unsupported prepend_if operation: %s to %s"%(
-                                type(amend_value), type(value)))
-        if self.append_if:
-            self.scope.stack.add_dep('OVERRIDES')
-            for override in self.scope['OVERRIDES']:
-                if self.append_if.has_key(override):
-                    amend_value = self.append_if[override]
-                    if isinstance(amend_value, MetaVar):
-                        amend_value = amend_value.get()
-                    if isinstance(amend_value, self.basetype):
-                        value += amend_value
-                    elif self.is_fixup_type(amend_value):
-                        value += self.fixup(amend_value)
-                    else:
-                        raise TypeError(
-                            "unsupported append_if operation: %s to %s"%(
-                                type(amend_value), type(value)))
-        return value
+        return super(MetaList, self).amend_if(copy.copy(value))
 
     def __add__(self, other):
         value = self.get()
@@ -1076,6 +1034,37 @@ class TestMetaString(unittest.TestCase):
         VAR.prepend_if['USE_bar'] = 'bar'
         self.assertEqual(VAR.get(), 'foobarx')
 
+    def test_prepend_if_metastring_1(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='x')
+        MetaVar(d, 'OVERRIDES', ['USE_foo', 'USE_bar'])
+        VAR.prepend_if['USE_foo'] = MetaVar(d, value='foo')
+        self.assertEqual(VAR.get(), 'foox')
+
+    def test_prepend_if_metastring_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='x')
+        MetaVar(d, 'OVERRIDES', ['USE_foo', 'USE_bar'])
+        a = MetaVar(d, value='foo')
+        a += 'bar'
+        VAR.prepend_if['USE_foo'] = a
+        self.assertEqual(VAR.get(), 'foobarx')
+
+    def test_prepend_if_metastring_3(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='x')
+        MetaVar(d, 'OVERRIDES', ['USE_foo', 'USE_bar'])
+        VAR.prepend_if['USE_foo'] = MetaVar(d, value='foo')
+        VAR.prepend_if['USE_bar'] = MetaVar(d, value='bar')
+        self.assertEqual(VAR.get(), 'barfoox')
+
+    def test_prepend_if_code_list(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='x')
+        MetaVar(d, 'OVERRIDES', ['USE_foo'])
+        VAR.prepend_if['USE_foo'] = compile('[42]', '<code>', 'eval')
+        self.assertRaises(TypeError, VAR.get)
+
     def test_append_if_1(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
@@ -1114,6 +1103,13 @@ class TestMetaString(unittest.TestCase):
         VAR.append_if['USE_foo'] = MetaVar(d, value='foo')
         VAR.append_if['USE_bar'] = MetaVar(d, value='bar')
         self.assertEqual(VAR.get(), 'xfoobar')
+
+    def test_append_if_code_list(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='x')
+        MetaVar(d, 'OVERRIDES', ['USE_foo'])
+        VAR.append_if['USE_foo'] = compile('[42]', '<code>', 'eval')
+        self.assertRaises(TypeError, VAR.get)
 
     def test_str(self):
         d = MetaData()
@@ -1342,6 +1338,12 @@ class TestMetaList(unittest.TestCase):
         VAR.prepend(MetaVar(d, value=['x']))
         self.assertEqual(VAR.get(), ['x', 'foo', 'bar'])
 
+    def test_prepend_string(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo'])
+        VAR.prepend('bar')
+        self.assertEqual(VAR.get(), ['bar', 'foo'])
+
     def test_append_1(self):
         d = MetaData()
         VAR = MetaVar(d, value=['foo'])
@@ -1391,17 +1393,53 @@ class TestMetaList(unittest.TestCase):
         VAR.append('\nbar\nx\n')
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
 
+    def test_add_list(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo'])
+        VAR += ['bar', 'x']
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
+    def test_add_metalist(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo'])
+        VAR += MetaVar(d, value=['bar', 'x'])
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
     def test_add_str(self):
         d = MetaData()
         VAR = MetaVar(d, value=['foo'])
         VAR += 'bar'
         self.assertEqual(VAR.get(), ['foo', 'bar'])
 
-    def test_add_list(self):
+    def test_add_metastr(self):
         d = MetaData()
         VAR = MetaVar(d, value=['foo'])
-        VAR += ['bar', 'x']
-        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+        VAR += MetaVar(d, value='bar')
+        self.assertEqual(VAR.get(), ['foo', 'bar'])
+
+    def test_add_int(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo'])
+        with self.assertRaises(TypeError):
+            VAR += 42
+
+    def test_add_true(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo'])
+        with self.assertRaises(TypeError):
+            VAR += True
+
+    def test_add_false(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo'])
+        with self.assertRaises(TypeError):
+            VAR += False
+
+    def test_add_dict(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo'])
+        with self.assertRaises(TypeError):
+            VAR += { 'bar': 42 }
 
     def test_set_invalid_attr(self):
         d = MetaData()
@@ -1458,6 +1496,13 @@ class TestMetaList(unittest.TestCase):
         VAR.prepend_if['USE_bar'] = ['bar']
         self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
 
+    def test_prepend_if_string(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['x'])
+        MetaVar(d, 'OVERRIDES', ['USE_foo'])
+        VAR.prepend_if['USE_foo'] = " foo  \t \n\t bar\n"
+        self.assertEqual(VAR.get(), ['foo', 'bar', 'x'])
+
     def test_append_if_1(self):
         d = MetaData()
         VAR = MetaVar(d, value=['foo'])
@@ -1496,6 +1541,13 @@ class TestMetaList(unittest.TestCase):
         VAR.append_if['USE_foo'] = MetaVar(d, value='foo')
         VAR.append_if['USE_bar'] = MetaVar(d, value='bar')
         self.assertEqual(VAR.get(), 'xfoobar')
+
+    def test_append_if_string(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['x'])
+        MetaVar(d, 'OVERRIDES', ['USE_foo'])
+        VAR.append_if['USE_foo'] = " foo  \t \n\t bar\n"
+        self.assertEqual(VAR.get(), ['x', 'foo', 'bar'])
 
     def test_str(self):
         d = MetaData()
