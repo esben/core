@@ -8,18 +8,38 @@ import logging
 log = logging.getLogger()
 
 
-# TODO: when doing VAR.get() on a MetaList, all list members that are strings
-# should be variable expanded.  Same for MetaDict later on.
+# FIXME: fix MetaData caching. When any changes are done with .set(),
+# .append(), .prepend() cache must be invalidated.  But how do we handle
+# override_if, append_if, prepend_if dicts?  We propably need to subclass dict
+# for this purpose.
 
 # TODO: MetaData.copy()
+
+# TODO: test if builtin filter() can be used for efficient retrieving list of
+# variables with a specific attribute set (True).
+
+# TODO: add_hook() method
+
+# TODO: when doing VAR.get() on a MetaDict, all key and values that are
+# strings should be variable expanded.
+
+# TODO: figure out required life-cycle model...  do we need to have
+# pickle/unpickle for parallel parse?
+
+# TODO: flatten to json support.  Write to two dicts, one with key to value,
+# and another one with key to dict of attributes.  Or one dict, with tuple of
+# (value, dict of attributes).
 
 # TODO: MetaPythonFunc() class
 
 # TODO: MetaShellFunc() class
 
+# TODO: include task (True/False) slot/attribute in python and shell func
+# classes
 
-class MetaDataCacheMiss(Exception):
-    pass
+# TODO: warn on replace of MetaData variable?  should be using .set() method
+# always??
+
 
 class MetaDataRecursiveEval(Exception):
     pass
@@ -27,9 +47,15 @@ class MetaDataRecursiveEval(Exception):
 
 class MetaDataStack(object):
 
-    def __init__(self):
+    __slots__ = [ 'cache', 'var', 'deps' ]
+
+    def __init__(self, cache):
+        self.cache = cache
         self.var = []
         self.deps = []
+
+    def __str__(self, prefix='\n  '):
+        return prefix.join(self.var)
 
     def push(self, var):
         assert isinstance(var, MetaVar)
@@ -48,9 +74,6 @@ class MetaDataStack(object):
                 self.deps[-1] = self.deps[-1].union(deps)
         return deps
 
-    def clear_deps(self):
-        self.deps[-1] = set()
-
     def add_dep(self, dep):
         if self.deps:
             self.deps[-1].add(dep)
@@ -59,21 +82,64 @@ class MetaDataStack(object):
         if self.deps and deps:
             self.deps[-1] = self.deps[-1].union(deps)
 
-    def __str__(self, prefix='\n  '):
-        return prefix.join(self.var)
+    def clear_deps(self):
+        self.deps[-1] = set()
+
+    def cache_value(self, value):
+        self.cache[self.var[-1]] = (value, self.deps[-1])
+
+
+class MetaDataCache(dict):
+
+    def __setitem__(self, key, value):
+        assert isinstance(value, tuple) and len(value) == 2
+        dict.__setitem__(self, key, (value[0], list(value[1])))
+
+    def __delitem__(self, key):
+        try:
+            dict.__delitem__(self, key)
+        except KeyError:
+            pass
+        for (name, (value, deps)) in self.items():
+            if key in deps:
+                dict.__delitem__(self, name)
+
+    def json_encode(self):
+        init = {}
+        for (key, (value, deps)) in self.items():
+            init[key] = (value, list(deps))
+        return { '__jsonclass__': [self.__class__.__name__, [init]] }
 
 
 class MetaData(dict):
 
-    def __init__(self):
+    __slots__ = [ 'cache', 'stack' ]
+
+    def __init__(self, init=None):
         dict.__init__(self)
-        self.eval_cache = {}
-        self.stack = MetaDataStack()
-        MetaList(self, 'OVERRIDES', [])
+        if init is None:
+            self.cache = MetaDataCache()
+            self.stack = MetaDataStack(self.cache)
+            MetaList(self, 'OVERRIDES', [])
+        elif isinstance(init, MetaData):
+            for name,var in init.items():
+                var.copy(self)
+            self.cache = init.cache.copy()
+            self.stack = MetaDataStack(self.cache)
+        elif isinstance(init, dict):
+            self.cache = MetaDataCache()
+            self.stack = MetaDataStack(self.cache)
+            for name,var in init.items():
+                MetaVar(self, name, var)
+            if not 'OVERRIDES' in self:
+                MetaList(self, 'OVERRIDES', [])
 
     def __setitem__(self, key, val):
         assert isinstance(val, MetaVar)
-        self.clean(key)
+        try:
+            del self.cache[key]
+        except AttributeError:
+            pass # ignore missing cache, ie. during __init__
         val.name = key
         dict.__setitem__(self, key, val)
 
@@ -83,17 +149,23 @@ class MetaData(dict):
 
     def __delitem__(self, key):
         var = dict.__getitem__(self, key)
-        self.clean(key)
+        del self.cache[key]
         var.name = None
         dict.__delitem__(self, key)
         return var
-    
-    def expand_var_or_raise(self, sub):
+
+    def expand_full(self, sub):
+        sub = sub.group(0)
         name = sub[2:-1]
-        var = dict.__getitem__(self, sub[name])
-        return var.get()        
-    
-    def expand_var_or_leave(self, sub):
+        var = dict.__getitem__(self, name)
+        value = var.get()
+        if not isinstance(value, basestring):
+            raise TypeError(
+                "expanded variables must be string: %s is %s"%(
+                    name, type(value)))
+        return value
+
+    def expand_partial(self, sub):
         sub = sub.group(0)
         name = sub[2:-1]
         try:
@@ -101,20 +173,39 @@ class MetaData(dict):
         except KeyError:
             self.stack.add_dep(name)
             return sub
-        return var.get()        
-    
-    def expand_var_or_empty(self, sub):
+        value = var.get()
+        if not isinstance(value, basestring):
+            raise TypeError(
+                "expanded variables must be string: %s is %s"%(
+                    name, type(value)))
+        return value
+
+    def expand_clean(self, sub):
+        sub = sub.group(0)
         name = sub[2:-1]
         try:
-            var = dict.__getitem__(self, sub[name])
+            var = dict.__getitem__(self, name)
         except KeyError:
             self.stack.add_dep(name)
             return ''
-        return var.get()        
+        value = var.get()
+        if not isinstance(value, basestring):
+            raise TypeError(
+                "expanded variables must be string: %s is %s"%(
+                    name, type(value)))
+        return value
 
     expand_re = re.compile(r'\$\{[a-zA-Z_]+\}')
-    def expand(self, value):
-        return re.sub(self.expand_re, self.expand_var_or_leave, value)
+    def expand(self, value, method='full'):
+        if method == 'full':
+            return re.sub(self.expand_re, self.expand_full, value)
+        elif method == 'no':
+            return value
+        elif method == 'partial':
+            return re.sub(self.expand_re, self.expand_partial, value)
+        elif method == 'clean':
+            return re.sub(self.expand_re, self.expand_clean, value)
+        raise TypeError("method argument must be string")
 
     def eval(self, value):
         if isinstance(value, types.CodeType):
@@ -123,31 +214,71 @@ class MetaData(dict):
             value = value.get()
         return value
 
-    def cache(self, value):
-        self.eval_cache[self.stack.var[-1]] = (value, self.stack.deps[-1])
+    def __repr__(self):
+        return "%s()"%(self.__class__.__name__)
 
-    def get_cached(self, var):
-        try:
-            return self.eval_cache[var]
-        except KeyError:
-            raise MetaDataCacheMiss(var)
+    def json_encode(self):
+        def metavar_encode(obj):
+            return obj.json_encode()
+        attrs = { '__jsonclass__': [self.__class__.__name__, []] }
+        attrs['cache'] = self.cache.json_encode()
+        return json.dumps([attrs, self], default=metavar_encode)
 
-    def clean(self, var):
+    def json_decode(self, obj):
         try:
-            del self.eval_cache[var]
+            cls = obj.pop('__jsonclass__')
         except KeyError:
-            pass
-        for (name, (value, deps)) in self.eval_cache.items():
-            if var in deps:
-                del self.eval_cache[name]
+            return obj
+        if cls == 'MetaData':
+            instance = self
+        else:
+            constructor = eval(cls[0])
+            try:
+                args = cls[1]
+            except IndexError:
+                args = []
+            try:
+                kwargs = cls[2]
+            except IndexError:
+                kwargs = {}
+            if issubclass(constructor, MetaVar):
+                name = obj.pop('name')
+                instance = constructor(self, name, *args, **kwargs)
+            else:
+                instance = constructor(*args, **kwargs)
+        for name, value in obj.items():
+            setattr(instance, name, value)
+        return instance
+
+
+class MetaVarDict(dict):
+
+    __slots__ = [ 'dict', 'var' ]
+
+    def __init__(self, init={}, var=None):
+        dict.__init__(self)
+        for key, value in init.items():
+            self.update(init)
+        self.var = var
+
+    def __setitem__(self, key, value):
+        del self.var.scope.cache[self.var.name]
+        dict.__setitem__(self, key, value)
+
+    def json_encode(self):
+        return { '__jsonclass__': [self.__class__.__name__, [None, self.dict]] }
 
 
 class MetaVar(object):
 
-    __slots__ = [ 'scope', 'name', 'value', 'override_if', ]
+    __slots__ = [ 'scope', 'name', 'value', 'override_if', 'emit', 'omit' ]
 
     def __new__(cls, scope, name=None, value=None):
-        if isinstance(value, basestring):
+        if cls != MetaVar:
+            return super(MetaVar, cls).__new__(cls)
+        if isinstance(value, MetaVar):
+            return super(MetaVar, value).__new__(type(value))
+        elif isinstance(value, basestring):
             return super(MetaVar, cls).__new__(MetaString)
         elif isinstance(value, list):
             return super(MetaVar, cls).__new__(MetaList)
@@ -161,15 +292,35 @@ class MetaVar(object):
             return super(MetaVar, cls).__new__(MetaString)
 
     def __init__(self, scope, name=None, value=None):
-        if isinstance(value, MetaVar):
-            value = value.get()
-        self.value = value
         assert isinstance(scope, MetaData)
+        assert (value is None or
+                isinstance(value, self.basetype) or
+                isinstance(value, type(self)) or
+                isinstance(value, types.CodeType))
         self.scope = scope
+        if isinstance(value, MetaVar):
+            self.scope = scope
+            for attr in MetaVar.__slots__:
+                if attr in ('scope', 'name'):
+                    continue
+                try:
+                    setattr(self, attr, getattr(value, attr))
+                except AttributeError:
+                    pass
+        else:
+            self.value = value
         self.name = name
         if name is not None:
             self.scope[name] = self
-        self.override_if = {}
+        self.override_if = MetaVarDict()
+
+    def copy(self, scope):
+        self.__class__(scope, self.name, self)
+
+    def __setattr__(self, name, value):
+        if name in ('override_if', 'prepend_if', 'append_if'):
+            value.var = self
+        object.__setattr__(self, name, value)
 
     def __repr__(self):
         return '%s(%r)'%(self.__class__.__name__, self.get())
@@ -184,22 +335,30 @@ class MetaVar(object):
                 isinstance(value, types.CodeType)):
             raise TypeError("cannot set %r object to %s value"%(
                     self, type(value)))
+        del self.scope.cache[self.name]
         self.value = value
+
+    def weak_set(self, value):
+        if self.value is None:
+            del self.scope.cache[self.name]
+            return self.set(value)
 
     def get(self):
         if self.name is not None:
             try:
-                value, deps = self.scope.get_cached(self.name)
+                value, deps = self.scope.cache[self.name]
+            except KeyError:
+                pass
+            else:
                 self.scope.stack.add_dep(self.name)
                 self.scope.stack.add_deps(deps)
                 return value
-            except MetaDataCacheMiss:
-                pass
         self.scope.stack.push(self)
         try:
             value = self.scope.eval(self.value)
             if not isinstance(value, self.basetype):
-                raise TypeError("invalid type %s in %r"%(type(value), self))
+                raise TypeError("invalid type %s in %s %s"%(
+                        type(value), type(self), self.name))
             if isinstance(self, MetaSequence):
                 value = self.amend(value)
             if self.override_if:
@@ -213,24 +372,60 @@ class MetaVar(object):
             if isinstance(self, MetaSequence):
                  value = self.amend_if(value)
             if isinstance(value, basestring):
-                value = self.scope.expand(value)
+                value = self.scope.expand(value, method=self.expand)
             if self.name is not None:
-                self.scope.cache(value)
+                self.scope.stack.cache_value(value)
         finally:
             self.scope.stack.pop()
+            pass
         return value
+
+    def json_encode(self):
+        import inspect
+        slots = set()
+        for cls in inspect.getmro(self.__class__):
+            try:
+                slots.update(cls.__slots__)
+            except AttributeError:
+                pass
+        obj = { '__jsonclass__': [self.__class__.__name__, []] }
+        for slot in slots:
+            if slot == 'scope':
+                continue
+            try:
+                attr = getattr(self, slot)
+                if isinstance(attr, MetaVarDict):
+                    obj[slot] = {'__jsonclass__':
+                                     [attr.__class__.__name__, [attr]] }
+                elif isinstance(attr, dict):
+                    obj[slot] = attr.copy()
+                elif isinstance(attr, list):
+                    obj[slot] = copy.copy(attr)
+                elif type(attr) in (str, unicode, int, long, float, bool,
+                                    types.NoneType):
+                    obj[slot] = attr
+            except AttributeError:
+                pass
+        return obj
 
 
 class MetaSequence(MetaVar):
 
-    __slots__ = [ 'prepend', 'append', 'prepends', 'appends',
+    __slots__ = [ 'prepends', 'appends',
                   'prepend_if', 'append_if' ]
 
     def __init__(self, scope, name=None, value=None):
-        self.prepends = []
-        self.prepend_if = {}
-        self.appends = []
-        self.append_if = {}
+        if isinstance(value, MetaVar):
+            for attr in MetaSequence.__slots__:
+                try:
+                    setattr(self, attr, getattr(value, attr))
+                except AttributeError:
+                    pass
+        else:
+            self.prepends = []
+            self.prepend_if = MetaVarDict()
+            self.appends = []
+            self.append_if = MetaVarDict()
         super(MetaSequence, self).__init__(scope, name, value)
 
     def __getitem__(self, index):
@@ -254,11 +449,13 @@ class MetaSequence(MetaVar):
     def prepend(self, value):
         if isinstance(value, MetaVar):
             value = value.get()
+        del self.scope.cache[self.name]
         self.prepends.append(value)
 
     def append(self, value):
         if isinstance(value, MetaVar):
             value = value.get()
+        del self.scope.cache[self.name]
         self.appends.append(value)
 
     def __add__(self, other):
@@ -277,12 +474,28 @@ class MetaSequence(MetaVar):
         self.prepends = []
         self.appends = []
 
+    def weak_set(self, value):
+        if self.value is None and not self.prepends and not self.appends:
+            del self.scope.cache[self.name]
+            return self.set(value)
+
 
 class MetaString(MetaSequence):
 
-    __slots__ = []
+    __slots__ = [ 'expand', 'export' ]
 
     basetype = basestring
+
+    def __init__(self, scope, name=None, value=None):
+        if isinstance(value, MetaVar):
+            for attr in MetaString.__slots__:
+                try:
+                    setattr(self, attr, getattr(value, attr))
+                except AttributeError:
+                    pass
+        else:
+            self.expand = 'full'
+        super(MetaString, self).__init__(scope, name, value)
 
     def __str__(self):
         return self.get()
@@ -343,9 +556,20 @@ class MetaString(MetaSequence):
 
 class MetaList(MetaSequence):
 
-    __slots__ = [ 'separator' ]
+    __slots__ = [ 'separator', 'expand' ]
 
     basetype = list
+
+    def __init__(self, scope, name=None, value=None):
+        if isinstance(value, MetaVar):
+            for attr in MetaString.__slots__:
+                try:
+                    setattr(self, attr, getattr(value, attr))
+                except AttributeError:
+                    pass
+        else:
+            self.expand = 'full'
+        super(MetaList, self).__init__(scope, name, value)
 
     def __iter__(self):
         return self.get().__iter__()
@@ -379,7 +603,8 @@ class MetaList(MetaSequence):
                 if isinstance(amend_value, self.basetype):
                     value = amend_value + value
                 elif isinstance(amend_value, basestring):
-                    amend_value = self.scope.expand(amend_value)
+                    amend_value = self.scope.expand(amend_value,
+                                                    method=self.expand)
                     value = self.split_str(amend_value) + value
                 else:
                     raise TypeError(
@@ -391,7 +616,8 @@ class MetaList(MetaSequence):
                 if isinstance(amend_value, self.basetype):
                     value += amend_value
                 elif isinstance(amend_value, basestring):
-                    amend_value = self.scope.expand(amend_value)
+                    amend_value = self.scope.expand(amend_value,
+                                                    method=self.expand)
                     value += self.split_str(amend_value)
                 else:
                     raise TypeError(
@@ -411,7 +637,8 @@ class MetaList(MetaSequence):
                     if isinstance(amend_value, self.basetype):
                         value = amend_value + value
                     elif isinstance(amend_value, basestring):
-                        amend_value = self.scope.expand(amend_value)
+                        amend_value = self.scope.expand(amend_value,
+                                                        method=self.expand)
                         value = self.split_str(amend_value) + value
                     else:
                         raise TypeError(
@@ -441,8 +668,7 @@ class MetaList(MetaSequence):
         elif isinstance(other, MetaString):
             other = other.get()
         if isinstance(other, basestring):
-            ifs = getattr(self, 'ifs', ' \t\n')
-            other = re.split('[%s]+'%(ifs), string.strip(other, ifs))
+            other = self.split_str(other)
         elif not isinstance(other, self.basetype):
             raise TypeError(
                 "cannot concatenate %s and %s objects"%(
@@ -482,9 +708,48 @@ class MetaInt(MetaVar):
         pass
 
 
+import json
+
 import unittest
 
+
+class TestMetaData(unittest.TestCase):
+
+    def setUp(self):
+        pass
+
+    def test_metadata_init_default(self):
+        d = MetaData()
+        self.assertIsInstance(d, MetaData)
+
+    def test_metadata_str(self):
+        d = MetaData()
+        self.assertIsInstance(str(d), str)
+
+    def test_metadatastack_str(self):
+        d = MetaData()
+        self.assertEqual(str(d.stack), '')
+
+    def test_metadata_init_metadata(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        self.assertEqual(src['FOO'].get(), 'foo')
+        dst = MetaData(src)
+        self.assertIsInstance(dst, MetaData)
+        src['FOO'].set('bar')
+        self.assertEqual(dst['FOO'].get(), 'foo')
+
+    def test_init_dict(self):
+        d = MetaData({'FOO': 'foo', 'BAR': 'bar'})
+        self.assertEqual(d['FOO'].get(), 'foo')
+        d['FOO'].set('bar')
+        self.assertEqual(d['FOO'].get(), 'bar')
+
+
 class TestMetaVar(unittest.TestCase):
+
+    def setUp(self):
+        pass
 
     def test_init_default(self):
         d = MetaData()
@@ -511,8 +776,58 @@ class TestMetaVar(unittest.TestCase):
         VAR = MetaVar(d, MetaVar(d, value=[42]))
         self.assertIsInstance(VAR, MetaString)
 
-    def setUp(self):
-        pass
+    def test_del(self):
+        d = MetaData()
+        MetaVar(d, 'VAR', 'foobar')
+        self.assertEqual(d['VAR'].get(), 'foobar')
+        del d['VAR']
+        with self.assertRaises(KeyError):
+            d['VAR']
+
+    def test_cache_set(self):
+        d = MetaData()
+        MetaVar(d, 'VAR', 'foo')
+        self.assertEqual(d['VAR'].get(), 'foo')
+        d['VAR'].set('bar')
+        self.assertEqual(d['VAR'].get(), 'bar')
+
+    def test_cache_append(self):
+        d = MetaData()
+        MetaVar(d, 'VAR', 'foo')
+        self.assertEqual(d['VAR'].get(), 'foo')
+        d['VAR'].append('bar')
+        self.assertEqual(d['VAR'].get(), 'foobar')
+
+    def test_cache_prepend(self):
+        d = MetaData()
+        MetaVar(d, 'VAR', 'foo')
+        self.assertEqual(d['VAR'].get(), 'foo')
+        d['VAR'].prepend('bar')
+        self.assertEqual(d['VAR'].get(), 'barfoo')
+
+    def test_cache_override_if(self):
+        d = MetaData()
+        MetaVar(d, 'VAR', 'foo')
+        self.assertEqual(d['VAR'].get(), 'foo')
+        d['OVERRIDES'].append('USE_bar')
+        d['VAR'].override_if['USE_bar'] = 'bar'
+        self.assertEqual(d['VAR'].get(), 'bar')
+
+    def test_cache_append_if(self):
+        d = MetaData()
+        MetaVar(d, 'VAR', 'foo')
+        self.assertEqual(d['VAR'].get(), 'foo')
+        d['OVERRIDES'].append('USE_bar')
+        d['VAR'].append_if['USE_bar'] = 'bar'
+        self.assertEqual(d['VAR'].get(), 'foobar')
+
+    def test_cache_prepend_if(self):
+        d = MetaData()
+        MetaVar(d, 'VAR', 'foo')
+        self.assertEqual(d['VAR'].get(), 'foo')
+        d['OVERRIDES'].append('USE_bar')
+        d['VAR'].prepend_if['USE_bar'] = 'bar'
+        self.assertEqual(d['VAR'].get(), 'barfoo')
 
 
 class TestMetaString(unittest.TestCase):
@@ -778,6 +1093,11 @@ class TestMetaString(unittest.TestCase):
         BAR = MetaVar(d, 'BAR', compile('FOO', '<code>', 'eval'))
         self.assertRaises(MetaDataRecursiveEval, FOO.get)
 
+    def test_var_expand_default_method(self):
+        d = MetaData()
+        MetaVar(d, 'FOO', 'foo')
+        self.assertEqual(d['FOO'].expand, 'full')
+
     def test_var_expand_1(self):
         d = MetaData()
         MetaVar(d, 'FOO', 'foo')
@@ -791,6 +1111,50 @@ class TestMetaString(unittest.TestCase):
         MetaVar(d, 'Y', '${X}y')
         MetaVar(d, 'Z', '${Y}z')
         self.assertEqual(d['Z'].get(), 'xyz')
+
+    def test_var_expand_3(self):
+        d = MetaData()
+        MetaVar(d, 'FOO', 'foo')
+        MetaVar(d, 'BAR', 'bar')
+        MetaVar(d, 'FOOBAR', '${FOO}${BAR}')
+        self.assertEqual(d['FOOBAR'].get(), 'foobar')
+        MetaVar(d, 'FOO', 'xfoox')
+        self.assertEqual(d['FOOBAR'].get(), 'xfooxbar')
+
+    def test_var_expand_full(self):
+        d = MetaData()
+        MetaVar(d, 'FOO', 'foo')
+        FOOBAR = MetaVar(d, 'FOOBAR', '${FOO}${BAR}')
+        FOOBAR.expand = 'full'
+        self.assertRaises(KeyError, FOOBAR.get)
+
+    def test_var_expand_partial(self):
+        d = MetaData()
+        MetaVar(d, 'FOO', 'foo')
+        FOOBAR = MetaVar(d, 'FOOBAR', '${FOO}${BAR}')
+        FOOBAR.expand = 'partial'
+        self.assertEqual(d['FOOBAR'].get(), 'foo${BAR}')
+
+    def test_var_expand_clean(self):
+        d = MetaData()
+        MetaVar(d, 'FOO', 'foo')
+        FOOBAR = MetaVar(d, 'FOOBAR', '${FOO}${BAR}')
+        FOOBAR.expand = 'clean'
+        self.assertEqual(d['FOOBAR'].get(), 'foo')
+
+    def test_var_expand_no(self):
+        d = MetaData()
+        MetaVar(d, 'FOO', 'foo')
+        FOOBAR = MetaVar(d, 'FOOBAR', '${FOO}${BAR}')
+        FOOBAR.expand = 'no'
+        self.assertEqual(d['FOOBAR'].get(), '${FOO}${BAR}')
+
+    def test_var_expand_invalid(self):
+        d = MetaData()
+        MetaVar(d, 'FOO', 'foo')
+        FOOBAR = MetaVar(d, 'FOOBAR', '${FOO}${BAR}')
+        FOOBAR.expand = 'hello world'
+        self.assertRaises(TypeError, FOOBAR.get)
 
     def test_var_expand_override_change(self):
         d = MetaData()
@@ -818,6 +1182,40 @@ class TestMetaString(unittest.TestCase):
         BAR = MetaVar(d, 'BAR', '${FOO}')
         self.assertRaises(MetaDataRecursiveEval, FOO.get)
 
+    def test_var_expand_full_list(self):
+        d = MetaData()
+        FOO = MetaVar(d, 'FOO', [42])
+        BAR = MetaVar(d, 'BAR', '${FOO}')
+        BAR.expand = 'full'
+        self.assertRaises(TypeError, BAR.get)
+
+    def test_var_expand_partial_list(self):
+        d = MetaData()
+        FOO = MetaVar(d, 'FOO', [42])
+        BAR = MetaVar(d, 'BAR', '${FOO}')
+        BAR.expand = 'partial'
+        self.assertRaises(TypeError, BAR.get)
+
+    def test_var_expand_clean_list(self):
+        d = MetaData()
+        FOO = MetaVar(d, 'FOO', [42])
+        BAR = MetaVar(d, 'BAR', '${FOO}')
+        BAR.expand = 'clean'
+        self.assertRaises(TypeError, BAR.get)
+
+    def test_weak_set_1(self):
+        d = MetaData()
+        FOO = MetaString(d, 'FOO')
+        FOO.weak_set('foo')
+        self.assertEqual(FOO.get(), 'foo')
+
+    def test_weak_set_2(self):
+        d = MetaData()
+        FOO = MetaString(d, 'FOO', 'foo')
+        FOO.weak_set('bar')
+        self.assertEqual(FOO.get(), 'foo')
+
+
 class TestMetaList(unittest.TestCase):
 
     def setUp(self):
@@ -835,23 +1233,23 @@ class TestMetaList(unittest.TestCase):
         VAR.set(MetaVar(d, value=['bar']))
         self.assertEqual(VAR.get(), ['bar'])
 
-    def test_set_list_str(self):
+    def test_set_get_str(self):
         d = MetaData()
         VAR = MetaVar(d, value=['foo'])
         VAR.set(' foo bar ')
         self.assertEqual(VAR.get(), ['foo', 'bar'])
 
-    def test_set_list_bool(self):
+    def test_set_bool(self):
         d = MetaData()
         VAR = MetaVar(d, value=['foo'])
         self.assertRaises(TypeError, VAR.set, (False))
 
-    def test_set_list_int(self):
+    def test_set_int(self):
         d = MetaData()
         VAR = MetaVar(d, value=['foo'])
         self.assertRaises(TypeError, VAR.set, (42))
 
-    def test_set_list_dict(self):
+    def test_set_dict(self):
         d = MetaData()
         VAR = MetaVar(d, value=['foo'])
         self.assertRaises(TypeError, VAR.set, ({'foo': 42}))
@@ -1082,6 +1480,77 @@ class TestMetaList(unittest.TestCase):
         MetaVar(d, 'FOOBAR', "${FOO} ${BAR}")
         VAR.append("${FOOBAR}")
         self.assertEqual(VAR.get(), ['f', 'o', 'o', 'b', 'a', 'r'])
+
+    def test_weak_set_1(self):
+        d = MetaData()
+        FOO = MetaList(d, 'FOO', None)
+        FOO.weak_set(['foo'])
+        self.assertEqual(FOO.get(), ['foo'])
+
+    def test_weak_set_2(self):
+        d = MetaData()
+        FOO = MetaList(d, 'FOO', ['foo'])
+        FOO.weak_set(['bar'])
+        self.assertEqual(FOO.get(), ['foo'])
+
+
+class TestJSON(unittest.TestCase):
+
+    def setUp(self):
+        pass
+
+    def test_json_1(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        dst = MetaData()
+        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        self.assertEqual(dst['FOO'].get(), 'foo')
+
+    def test_json_appends(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src['FOO'].append('bar')
+        dst = MetaData()
+        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        self.assertEqual(dst['FOO'].get(), 'foobar')
+
+    def test_json_prepends(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'bar')
+        src['FOO'].prepend('foo')
+        dst = MetaData()
+        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        self.assertEqual(dst['FOO'].get(), 'foobar')
+
+    def test_json_override_if(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src['FOO'].override_if['USE_bar'] = 'bar'
+        dst = MetaData()
+        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst['OVERRIDES'].append(['USE_bar'])
+        self.assertEqual(src['FOO'].get(), 'foo')
+        self.assertEqual(dst['FOO'].get(), 'bar')
+
+    def test_json_prepend_if(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'bar')
+        src['FOO'].prepend_if['USE_bar'] = 'foo'
+        dst = MetaData()
+        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst['OVERRIDES'].append(['USE_bar'])
+        self.assertEqual(src['FOO'].get(), 'bar')
+        self.assertEqual(dst['FOO'].get(), 'foobar')
+
+    def test_json_append_if(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src['FOO'].append_if['USE_bar'] = 'bar'
+        dst = MetaData()
+        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst['OVERRIDES'].append(['USE_bar'])
+        self.assertEqual(src['FOO'].get(), 'foo')
+        self.assertEqual(dst['FOO'].get(), 'foobar')
 
 if __name__ == '__main__':
     logging.basicConfig()
