@@ -8,11 +8,6 @@ import logging
 log = logging.getLogger()
 
 
-# FIXME: fix MetaData caching. When any changes are done with .set(),
-# .append(), .prepend() cache must be invalidated.  But how do we handle
-# override_if, append_if, prepend_if dicts?  We propably need to subclass dict
-# for this purpose.
-
 # TODO: MetaData.copy()
 
 # TODO: test if builtin filter() can be used for efficient retrieving list of
@@ -255,18 +250,15 @@ class MetaVarDict(dict):
 
     __slots__ = [ 'dict', 'var' ]
 
-    def __init__(self, init={}, var=None):
-        dict.__init__(self)
-        for key, value in init.items():
-            self.update(init)
-        self.var = var
+    def __init__(self, *args, **kwargs):
+        dict.__init__(self, *args, **kwargs)
 
     def __setitem__(self, key, value):
         del self.var.scope.cache[self.var.name]
         dict.__setitem__(self, key, value)
 
     def json_encode(self):
-        return { '__jsonclass__': [self.__class__.__name__, [None, self.dict]] }
+        return { '__jsonclass__': [self.__class__.__name__, [self]] }
 
 
 class MetaVar(object):
@@ -395,14 +387,9 @@ class MetaVar(object):
             try:
                 attr = getattr(self, slot)
                 if isinstance(attr, MetaVarDict):
-                    obj[slot] = {'__jsonclass__':
-                                     [attr.__class__.__name__, [attr]] }
-                elif isinstance(attr, dict):
-                    obj[slot] = attr.copy()
-                elif isinstance(attr, list):
-                    obj[slot] = copy.copy(attr)
+                    obj[slot] = attr.json_encode()
                 elif type(attr) in (str, unicode, int, long, float, bool,
-                                    types.NoneType):
+                                    types.NoneType, list, dict):
                     obj[slot] = attr
             except AttributeError:
                 pass
@@ -417,10 +404,7 @@ class MetaSequence(MetaVar):
     def __init__(self, scope, name=None, value=None):
         if isinstance(value, MetaVar):
             for attr in MetaSequence.__slots__:
-                try:
-                    setattr(self, attr, getattr(value, attr))
-                except AttributeError:
-                    pass
+                setattr(self, attr, getattr(value, attr))
         else:
             self.prepends = []
             self.prepend_if = MetaVarDict()
@@ -718,19 +702,19 @@ class TestMetaData(unittest.TestCase):
     def setUp(self):
         pass
 
-    def test_metadata_init_default(self):
+    def test_init_default(self):
         d = MetaData()
         self.assertIsInstance(d, MetaData)
 
-    def test_metadata_str(self):
+    def test_str(self):
         d = MetaData()
         self.assertIsInstance(str(d), str)
 
-    def test_metadatastack_str(self):
+    def test_stack_str(self):
         d = MetaData()
         self.assertEqual(str(d.stack), '')
 
-    def test_metadata_init_metadata(self):
+    def test_init_metadata(self):
         src = MetaData()
         MetaVar(src, 'FOO', 'foo')
         self.assertEqual(src['FOO'].get(), 'foo')
@@ -771,7 +755,7 @@ class TestMetaVar(unittest.TestCase):
         VAR = MetaVar(d, value=[42])
         self.assertIsInstance(VAR, MetaList)
 
-    def test_init_metastring(self):
+    def test_init_metalist(self):
         d = MetaData()
         VAR = MetaVar(d, MetaVar(d, value=[42]))
         self.assertIsInstance(VAR, MetaString)
@@ -1551,6 +1535,7 @@ class TestJSON(unittest.TestCase):
         dst['OVERRIDES'].append(['USE_bar'])
         self.assertEqual(src['FOO'].get(), 'foo')
         self.assertEqual(dst['FOO'].get(), 'foobar')
+
 
 if __name__ == '__main__':
     logging.basicConfig()
