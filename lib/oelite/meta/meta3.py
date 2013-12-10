@@ -8,6 +8,25 @@ import logging
 log = logging.getLogger()
 
 
+# TODO: make MetaDict() item values to be MetaVar members, so that you can do
+# stuff like:
+#   DEPENDS['foo'].append_if['HOST_LIBC_uclibc'] = 'libfoobar'
+# To still be able to use eval caching, the cache needs to be aware of this,
+# so that both
+#   DEPENDS.get()
+# and
+#   DEPENDS['foo'].get()
+# can be safely cached, and that changes to DEPENDS['foo'] invalidates both
+# DEPENDS['foo'] cache value, DEPENDS cache value, and anything depending on
+# them.
+# To simplify things, the entire MetaDict might be seen as one item in the
+# cache...
+# Changes might be needed in MetaDict constructor, set, __setitem__,
+# __getitem__, and in MetaDataCache perhaps.
+
+# TODO: when doing VAR.get() on a MetaDict, all key and values that are
+# strings should be variable expanded.
+
 # TODO: figure out required life-cycle model...  do we need to have
 # pickle/unpickle for parallel parse?
 
@@ -20,8 +39,13 @@ log = logging.getLogger()
 
 # TODO: MetaDict
 
-# TODO: when doing VAR.get() on a MetaDict, all key and values that are
-# strings should be variable expanded.
+# TODO: implement MetaDict methods: __contains__, __iter__, __len__, clear,
+# has_key, items, keys, pop, setdefault, update
+
+# Write unittests demonstrating how to use a dict to hold other variables,
+# fx. a MetaDict(FILES) which holds lists of file globs, with each list being
+# a variable, where overrides, prepends and appends can be used.  This might
+# require support for storing a tree-structure of anonymous MetaVar's...
 
 # TODO: MetaPythonFunc() class
 
@@ -230,8 +254,6 @@ class MetaData(dict):
             kwargs = {}
         if issubclass(constructor, MetaVar):
             name = obj.pop('name')
-            #print 'creating MetaVar', name
-            #print 'current keys', self.keys()
             instance = constructor(self, name, *args, **kwargs)
         else:
             instance = constructor(*args, **kwargs)
@@ -369,7 +391,7 @@ class MetaVar(object):
                         break
                 self.scope.stack.add_dep('OVERRIDES')
             if isinstance(self, MetaSequence):
-                # FIXME: handle value=None in amend_if() 
+                # FIXME: handle value=None in amend_if()
                 value = self.amend_if(value)
             if isinstance(value, basestring):
                 value = self.scope.expand(value, method=self.expand)
@@ -627,19 +649,23 @@ class MetaDict(MetaVar):
     __slots__ = []
     basetype = dict
 
-    #def __setitem__(self, key, value):
-    #    self.value[key] = value
-    #
-    #def __delitem__(self, key):
-    #    del self.value[key]
-    #
-    #def __getitem__(self, key):
-    #    return self.value[key] # FIXME: need to do something with the value
-                               # returned, ie. eval/expansion...  Better
-                               # return the evaluated/expanded value here, and
-                               # provide custom access functions for getting
-                               # raw values for those special situation where
-                               # that might be needed.
+    def __setitem__(self, key, value):
+        if self.value is None:
+            self.value = {}
+        dict.__setitem__(self.value, key, value)
+
+    def __delitem__(self, key):
+        if self.value is None:
+            raise KeyError(key)
+        dict.__delitem__(self.value, key)
+
+    def __getitem__(self, key):
+        return dict.__getitem__(self.value, key)
+
+    # FIXME: need to do something with the value returned,
+    # ie. eval/expansion...  Better return the evaluated/expanded value here,
+    # and provide custom access functions for getting raw values for those
+    # special situation where that might be needed.
 
 
 class MetaBool(MetaVar):
@@ -1706,10 +1732,110 @@ class TestMetaList(unittest.TestCase):
         self.assertEqual(FOO.get(), ['foo'])
 
 
+class TestMetaDict(unittest.TestCase):
+
+    def setUp(self):
+        pass
+
+    def test_init_metavar_1(self):
+        d = MetaData()
+        VAR = MetaVar(d, value={})
+        self.assertIsInstance(VAR, MetaDict)
+        self.assertEqual(VAR.get(), {})
+
+    def test_init_metavar_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, value={'foo': 1, 'bar': 2})
+        self.assertIsInstance(VAR, MetaDict)
+        self.assertEqual(VAR.get(), {'foo': 1, 'bar': 2})
+
+    def test_init_none(self):
+        d = MetaData()
+        VAR = MetaDict(d, value=None)
+        self.assertIsInstance(VAR, MetaDict)
+        self.assertEqual(VAR.get(), None)
+
+    def test_assign_1(self):
+        d = MetaData()
+        d['FOO'] = { 'foo': 1, 'bar': 2 }
+        self.assertIsInstance(d['FOO'], MetaDict)
+        self.assertEqual(d['FOO'].get(), {'foo': 1, 'bar': 2})
+
+    def test_get_1(self):
+        d = MetaData()
+        d['FOO'] = { 'foo': 1, 'bar': 2 }
+        self.assertEqual(d['FOO']['foo'], 1)
+        self.assertEqual(d['FOO']['bar'], 2)
+
+    def test_set_1(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['foo'] = 1
+        d['FOO']['bar'] = 2
+        self.assertEqual(d['FOO']['foo'], 1)
+        self.assertEqual(d['FOO']['bar'], 2)
+
+    def test_set_on_none(self):
+        d = MetaData()
+        VAR = MetaDict(d, value=None)
+        VAR['foo'] = 1
+        VAR['bar'] = 2
+        self.assertEqual(VAR['foo'], 1)
+        self.assertEqual(VAR['bar'], 2)
+
+    def test_del_1(self):
+        d = MetaData()
+        d['FOO'] = { 'foo': 1, 'bar': 2 }
+        del d['FOO']['foo']
+        self.assertEqual(d['FOO'].get(), {'bar': 2})
+
+    def test_del_2(self):
+        d = MetaData()
+        d['FOO'] = { 'foo': 1, 'bar': 2 }
+        with self.assertRaises(KeyError):
+            del d['FOO']['x']
+
+    def test_del_3(self):
+        d = MetaData()
+        VAR = MetaDict(d, value=None)
+        with self.assertRaises(KeyError):
+            del VAR['x']
+
+
 class TestMetaBool(unittest.TestCase):
 
     def setUp(self):
         pass
+
+    def test_init_metavar_true(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=True)
+        self.assertIsInstance(VAR, MetaBool)
+        self.assertEqual(VAR.get(), True)
+
+    def test_init_metavar_false(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=False)
+        self.assertIsInstance(VAR, MetaBool)
+        self.assertEqual(VAR.get(), False)
+
+    def test_init_none(self):
+        d = MetaData()
+        VAR = MetaBool(d, value=None)
+        self.assertIsInstance(VAR, MetaBool)
+        self.assertEqual(VAR.get(), None)
+
+    def test_init_true(self):
+        d = MetaData()
+        VAR = MetaBool(d, value=True)
+        self.assertIsInstance(VAR, MetaBool)
+        self.assertEqual(VAR.get(), True)
+
+    def test_init_false(self):
+        d = MetaData()
+        VAR = MetaBool(d, value=False)
+        self.assertIsInstance(VAR, MetaBool)
+        self.assertEqual(VAR.get(), False)
 
     def test_set_get_true(self):
         d = MetaData()
