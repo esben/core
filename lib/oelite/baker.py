@@ -190,6 +190,8 @@ class OEliteBaker:
         if len(self.recipes_todo) > 0:
             die("you cannot show world")
 
+        self.setup_tmpdir()
+
         thing = oelite.item.OEliteItem(self.things_todo[0])
         recipe = self.cookbook.get_recipe(
             type=thing.type, name=thing.name, version=thing.version,
@@ -202,12 +204,17 @@ class OEliteBaker:
                 task = self.options.task
             else:
                 task = "do_" + self.options.task
-            self.runq = OEliteRunQueue(self.config, self.cookbook)
+            self.options.rebuild = False
+            self.init_runq()
             self.runq._add_recipe(recipe, task)
+            self.gen_recipe_graph()
+            self.prepare_task_metadata()
             task = self.cookbook.get_task(recipe=recipe, name=task)
+            task.load_meta()
             task.prepare(self.runq)
             meta = task.meta
         else:
+            recipe.load_meta()
             meta = recipe.meta
 
         #meta.dump(pretty=False, nohash=False, flags=True,
@@ -263,7 +270,8 @@ class OEliteBaker:
     def init_runq(self):
         # init build quue
         self.runq = OEliteRunQueue(self.config, self.cookbook,
-                                   self.options.rebuild, self.options.relax)
+                                   getattr(self.options, 'rebuild', False),
+                                   getattr(self.options, 'relax', False))
 
     def build_deptree(self):
         # first, add complete dependency tree, with complete
@@ -302,7 +310,7 @@ class OEliteBaker:
         for recipe in recipes:
             unresolved_recipes.append((recipe, list(recipe.recipe_deps)))
 
-#    def propagate_extra_arch(self):
+    #def propagate_extra_arch(self):
         # Traverse recipe dependency graph, propagating EXTRA_ARCH on
         # recipe level.
         resolved_recipes = set([])
@@ -379,6 +387,7 @@ class OEliteBaker:
                "Loading task summary information", total, count)
             cache = task.recipe.get_cache()
             cache.load_task(task)
+            count += 1
         oelite.util.progress_info(
             "Loading task summary information", total, count)
 

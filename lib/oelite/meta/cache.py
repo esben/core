@@ -127,7 +127,7 @@ class MetaCache:
             if token == self.token:
                 return True
         return False
-    
+
     def clean(self):
         """Remove the underlying cache file (if it exists)."""
         if self.exists():
