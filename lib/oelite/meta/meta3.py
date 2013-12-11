@@ -675,7 +675,7 @@ class MetaList(MetaSequence):
 
 class MetaDict(MetaVar):
 
-    __slots__ = [ 'path', 'scope', 'update_if' ]
+    __slots__ = [ 'scope', 'update_if' ]
     basetype = dict
     empty = {}
 
@@ -685,13 +685,11 @@ class MetaDict(MetaVar):
                 isinstance(value, MetaDict) or
                 isinstance(value, dict))
         self.update_if = MetaVarDict()
-        if isinstance(parent, MetaDict):
-            self.scope = parent.scope
-            self.path = parent.path + [parent.name]
-        else:
+        if isinstance(parent, MetaData):
             self.scope = parent
-            self.path = []
-        print 'path=%s name=%s'%(self.path, name)
+        else:
+            self.scope = parent.scope
+            name = '%s.%s'%(parent.name, name)
         if isinstance(value, dict):
             super(MetaDict, self).__init__(self.scope, name, {})
             for key, val in value.iteritems():
@@ -705,14 +703,15 @@ class MetaDict(MetaVar):
         if self.value.__contains__(key):
             self.value[key].set(val)
             return
-        name = self.prefix + key
         if isinstance(val, dict):
-            var = MetaVar(self, name, val)
-        if type(val) in (str, unicode, list, int, long, bool):
-            var = MetaVar(self.scope, name, val)
-        elif isinstance(val, MetaVar):
-            var = val
-            var.name = name
+            var = MetaVar(self, key, val)
+        else:
+            name = '%s.%s'%(self.name, key)
+            if type(val) in (str, unicode, list, int, long, bool):
+                var = MetaVar(self.scope, name, val)
+            elif isinstance(val, MetaVar):
+                var = val
+                var.name = name
         self.value[key] = var
 
     def __getitem__(self, key):
@@ -725,19 +724,16 @@ class MetaDict(MetaVar):
 
     def get(self):
         if self.name is not None:
-            path = self.prefix.rstrip('.').split('.') + [self.name]
+            path = self.name.split('.')
             cache_name = path.pop(0)
             try:
                 value, deps = self.scope.cache[cache_name]
-                print 'value', value, 'deps', deps
             except KeyError:
                 pass
             else:
-                print 'cache_name', cache_name
                 self.scope.stack.add_dep(cache_name)
                 self.scope.stack.add_deps(deps)
                 while path:
-                    print 'path', path
                     value = value[path.pop(0)]
                 return value
         self.scope.stack.push(self)
@@ -1901,6 +1897,13 @@ class TestMetaDict(unittest.TestCase):
         d['FOO'] = { 'foo': 1, 'bar': 2 }
         self.assertEqual(d['FOO'].get(), { 'foo': 1, 'bar': 2 })
 
+    def test_get_invalid(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO'].set(compile('42', '<code>', 'eval'))
+        with self.assertRaises(TypeError):
+            d['FOO'].get()
+
     def test_getitem_1(self):
         d = MetaData()
         d['FOO'] = { 'foo': 1, 'bar': 2 }
@@ -1966,11 +1969,6 @@ class TestMetaDict(unittest.TestCase):
         d['FOO']['x'] = {}
         d['FOO']['x']['y'] = {}
         d['FOO']['x']['y']['z'] = 42
-        print d['FOO'].prefix, d['FOO'].name
-        print d['FOO'].prefix, d['FOO']['x'].name
-        print d['FOO'].prefix, d['FOO']['x']['y'].name
-        print d['FOO']['x']['y']['z'].name
-
         self.assertIsInstance(d['FOO'], MetaDict)
         self.assertIsInstance(d['FOO']['x'], MetaDict)
         self.assertIsInstance(d['FOO']['x']['y'], MetaDict)
@@ -1980,9 +1978,8 @@ class TestMetaDict(unittest.TestCase):
         self.assertEqual(d['FOO']['x'].get()['y']['z'], 42)
         self.assertEqual(d['FOO'].get()['x']['y']['z'], 42)
         self.assertEqual(d['FOO']['x']['y'].get()['z'], 42)
-        self.assertEqual(d['FOO']['x']['y'].get()['z'].get(), 42)
 
-    def test_override_if(self):
+    def test_override_if_1(self):
         d = MetaData()
         d['FOO'] = {}
         d['FOO']['foo'] = 42
@@ -1992,7 +1989,63 @@ class TestMetaDict(unittest.TestCase):
         with self.assertRaises(KeyError):
             d['FOO'].get()['foo'].get()
 
-    def test_override_and_update_if_a_lot(self):
+    def test_override_if_2(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['BAR'] = {}
+        d['FOO'].override_if['USE_foo'] = { 'foo': 42 }
+        d['FOO']['BAR'].override_if['USE_bar'] = { 'bar': 43}
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['foo']
+        self.assertEqual(d['FOO'].get()['BAR'], {})
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['BAR']['bar']
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertEqual(d['FOO'].get()['foo'], 42)
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['BAR']
+        d['OVERRIDES'] = ['USE_bar']
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['foo']
+        self.assertEqual(d['FOO'].get()['BAR'], { 'bar': 43 })
+        self.assertEqual(d['FOO'].get()['BAR']['bar'], 43)
+        d['OVERRIDES'] = []
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['foo']
+        self.assertEqual(d['FOO'].get()['BAR'], {})
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['BAR']['bar']
+
+    def test_update_if_none(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['BAR'] = {}
+        d['FOO'].update_if['USE_foo'] = None
+        self.assertEqual(d['FOO'].get()['BAR'], {})
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertEqual(d['FOO'].get()['BAR'], {})
+
+    def test_none_update_if_none(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['BAR'] = {}
+        d['FOO']['BAR'].set(None)
+        d['FOO']['BAR'].update_if['USE_foo'] = { 'foo': 42 }
+        self.assertEqual(d['FOO'].get()['BAR'], None)
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertEqual(d['FOO'].get()['BAR']['foo'], 42)
+
+    def test_update_if_invalid(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['BAR'] = {}
+        d['FOO'].update_if['USE_foo'] = compile('42', '<code>', 'eval')
+        self.assertEqual(d['FOO'].get()['BAR'], {})
+        d['OVERRIDES'] = ['USE_foo']
+        with self.assertRaises(TypeError):
+            d['FOO'].get()
+
+    def test_override_and_update_if_1(self):
         d = MetaData()
         d['FOO'] = {}
         d['FOO']['foo'] = 42
