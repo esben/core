@@ -250,7 +250,12 @@ class MetaData(dict):
             value = eval(value, {}, self)
         if isinstance(value, MetaVar):
             value = value.get()
+        if isinstance(value, dict):
+            value = value.copy()
         return value
+
+    def eval_dict_values(self, d):
+        return { k: self.eval(v) for k,v in d.iteritems() }
 
     def __repr__(self):
         return "%s()"%(self.__class__.__name__)
@@ -284,21 +289,6 @@ class MetaData(dict):
         for name, value in obj.items():
             setattr(instance, name, value)
         return instance
-
-
-class MetaVarDict(dict):
-
-    __slots__ = [ 'dict', 'var' ]
-
-    def __init__(self, *args, **kwargs):
-        dict.__init__(self, *args, **kwargs)
-
-    def __setitem__(self, key, value):
-        del self.var.scope.cache[self.var.name]
-        dict.__setitem__(self, key, value)
-
-    def json_encode(self):
-        return { '__jsonclass__': [self.__class__.__name__, [self]] }
 
 
 class MetaVar(object):
@@ -352,7 +342,7 @@ class MetaVar(object):
         self.__class__(scope, self.name, self)
 
     def __setattr__(self, name, value):
-        if name in ('override_if', 'prepend_if', 'append_if'):
+        if name in ('override_if', 'prepend_if', 'append_if', 'update_if'):
             value.var = self
         object.__setattr__(self, name, value)
 
@@ -447,6 +437,21 @@ class MetaVar(object):
             except AttributeError:
                 pass
         return obj
+
+
+class MetaVarDict(dict):
+
+    __slots__ = [ 'dict', 'var' ]
+
+    def __init__(self, *args, **kwargs):
+        dict.__init__(self, *args, **kwargs)
+
+    def __setitem__(self, key, value):
+        del self.var.scope.cache[self.var.name]
+        dict.__setitem__(self, key, value)
+
+    def json_encode(self):
+        return { '__jsonclass__': [self.__class__.__name__, [self]] }
 
 
 class MetaSequence(MetaVar):
@@ -670,20 +675,23 @@ class MetaList(MetaSequence):
 
 class MetaDict(MetaVar):
 
-    __slots__ = [ 'prefix' ]
+    __slots__ = [ 'path', 'scope', 'update_if' ]
     basetype = dict
+    empty = {}
 
     def __init__(self, parent, name=None, value=None):
         assert isinstance(parent, MetaData) or isinstance(parent, MetaDict)
         assert (value is None or
                 isinstance(value, MetaDict) or
                 isinstance(value, dict))
+        self.update_if = MetaVarDict()
         if isinstance(parent, MetaDict):
             self.scope = parent.scope
-            self.prefix = '%s%s.'%(parent.prefix, parent.name)
+            self.path = parent.path + [parent.name]
         else:
             self.scope = parent
-            self.prefix = ''
+            self.path = []
+        print 'path=%s name=%s'%(self.path, name)
         if isinstance(value, dict):
             super(MetaDict, self).__init__(self.scope, name, {})
             for key, val in value.iteritems():
@@ -698,7 +706,9 @@ class MetaDict(MetaVar):
             self.value[key].set(val)
             return
         name = self.prefix + key
-        if type(val) in (str, unicode, list, dict, int, long, bool):
+        if isinstance(val, dict):
+            var = MetaVar(self, name, val)
+        if type(val) in (str, unicode, list, int, long, bool):
             var = MetaVar(self.scope, name, val)
         elif isinstance(val, MetaVar):
             var = val
@@ -714,17 +724,62 @@ class MetaDict(MetaVar):
         del self.value[key]
 
     def get(self):
-        if self.value is None:
-            return None
-        ret = {}
-        for key, val in self.value.iteritems():
-            ret[key] = val.get()
-        return ret
+        if self.name is not None:
+            path = self.prefix.rstrip('.').split('.') + [self.name]
+            cache_name = path.pop(0)
+            try:
+                value, deps = self.scope.cache[cache_name]
+                print 'value', value, 'deps', deps
+            except KeyError:
+                pass
+            else:
+                print 'cache_name', cache_name
+                self.scope.stack.add_dep(cache_name)
+                self.scope.stack.add_deps(deps)
+                while path:
+                    print 'path', path
+                    value = value[path.pop(0)]
+                return value
+        self.scope.stack.push(self)
+        try:
+            value = self.scope.eval(self.value)
+            if self.override_if:
+                for override in self.scope['OVERRIDES']:
+                    if self.override_if.has_key(override):
+                        self.scope.stack.clear_deps()
+                        value = self.scope.eval(self.override_if[override])
+                        break
+                self.scope.stack.add_dep('OVERRIDES')
+            if not (isinstance(value, self.basetype) or
+                    value is None):
+                raise TypeError("invalid type %s in %s %s"%(
+                        type(value), type(self), self.name))
+            value = self.amend_if(value)
+            if value is not None:
+                value = self.scope.eval_dict_values(value)
+            if self.name is not None:
+                self.scope.stack.cache_value(value)
+        finally:
+            self.scope.stack.pop()
+        return value
 
-    # FIXME: need to do something with the value returned,
-    # ie. eval/expansion...  Better return the evaluated/expanded value here,
-    # and provide custom access functions for getting raw values for those
-    # special situation where that might be needed.
+    def amend_if(self, value):
+        if self.update_if:
+            self.scope.stack.add_dep('OVERRIDES')
+            for override in reversed(self.scope['OVERRIDES']):
+                if self.update_if.has_key(override):
+                    amend_value = self.scope.eval(self.update_if[override])
+                    if not amend_value:
+                        continue
+                    if value is None:
+                        value = self.empty
+                    if isinstance(amend_value, self.basetype):
+                        value.update(amend_value)
+                    else:
+                        raise TypeError(
+                            "unsupported update_if operation: %s to %s"%(
+                                type(amend_value), type(value)))
+        return value
 
 
 class MetaBool(MetaVar):
@@ -1860,6 +1915,28 @@ class TestMetaDict(unittest.TestCase):
         self.assertEqual(d['FOO']['foo'].get(), 1)
         self.assertEqual(d['FOO']['bar'].get(), 2)
 
+    def test_set_2(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['foo'] = 1
+        d['FOO']['foo'] = 2
+        self.assertEqual(d['FOO']['foo'].get(), 2)
+
+    def test_set_3(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['I'] = 2
+        d['FOO']['foo'] = d['I']
+        self.assertEqual(d['FOO']['foo'].get(), 2)
+
+    def test_set_4(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['foo'] = 1
+        d['I'] = 2
+        d['FOO']['foo'] = d['I']
+        self.assertEqual(d['FOO']['foo'].get(), 2)
+
     def test_del_1(self):
         d = MetaData()
         d['FOO'] = { 'foo': 1, 'bar': 2 }
@@ -1877,11 +1954,65 @@ class TestMetaDict(unittest.TestCase):
     def test_struct_1(self):
         d = MetaData()
         d['FOO'] = {}
-        d['FOO']['bar'] = {}
-        d['FOO']['bar']['x'] = 42
+        d['FOO']['x'] = {}
+        d['FOO']['x']['y'] = 42
         self.assertIsInstance(d['FOO'], MetaDict)
-        self.assertIsInstance(d['FOO']['bar'], MetaDict)
-        self.assertIsInstance(d['FOO']['bar']['x'], MetaInt)
+        self.assertIsInstance(d['FOO']['x'], MetaDict)
+        self.assertIsInstance(d['FOO']['x']['y'], MetaInt)
+
+    def test_struct_2(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['x'] = {}
+        d['FOO']['x']['y'] = {}
+        d['FOO']['x']['y']['z'] = 42
+        print d['FOO'].prefix, d['FOO'].name
+        print d['FOO'].prefix, d['FOO']['x'].name
+        print d['FOO'].prefix, d['FOO']['x']['y'].name
+        print d['FOO']['x']['y']['z'].name
+
+        self.assertIsInstance(d['FOO'], MetaDict)
+        self.assertIsInstance(d['FOO']['x'], MetaDict)
+        self.assertIsInstance(d['FOO']['x']['y'], MetaDict)
+        self.assertIsInstance(d['FOO']['x']['y']['z'], MetaInt)
+        self.assertEqual(d['FOO']['x']['y']['z'].get(), 42)
+        self.assertEqual(d['FOO']['x']['y'].get()['z'], 42)
+        self.assertEqual(d['FOO']['x'].get()['y']['z'], 42)
+        self.assertEqual(d['FOO'].get()['x']['y']['z'], 42)
+        self.assertEqual(d['FOO']['x']['y'].get()['z'], 42)
+        self.assertEqual(d['FOO']['x']['y'].get()['z'].get(), 42)
+
+    def test_override_if(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['foo'] = 42
+        d['FOO'].override_if['USE_not_foo'] = {}
+        self.assertEqual(d['FOO']['foo'].get(), 42)
+        d['OVERRIDES'] = ['USE_not_foo']
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['foo'].get()
+
+    def test_override_and_update_if_a_lot(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['foo'] = 42
+        d['FOO'].override_if['USE_not_foo'] = {}
+        d['FOO'].update_if['USE_bar'] = { 'bar': 43 }
+        self.assertEqual(d['FOO']['foo'].get(), 42)
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['bar']
+        d['OVERRIDES'] = ['USE_not_foo']
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['foo']
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['bar']
+        d['OVERRIDES'] = ['USE_bar']
+        self.assertEqual(d['FOO'].get()['foo'], 42)
+        self.assertEqual(d['FOO'].get()['bar'], 43)
+        d['OVERRIDES'] = []
+        self.assertEqual(d['FOO']['foo'].get(), 42)
+        with self.assertRaises(KeyError):
+            d['FOO'].get()['bar']
 
 
 class TestMetaBool(unittest.TestCase):
