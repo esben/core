@@ -246,13 +246,29 @@ class OEliteBaker:
             else:
                 self.options.relax = None
 
+        self.init_runq()
+        self.build_deptree()
+        self.gen_recipe_graph()
+        #self.propagate_extra_arch()
+        self.prepare_task_metadata()
+        self.calc_task_hashes()
+        self.set_task_build_flags()
+        self.check_prebakes()
+        self.propagate_task_build()
+        self.set_package_filenames()
+        self.prune_runq()
+        self.really_bake()
+
+
+    def init_runq(self):
         # init build quue
         self.runq = OEliteRunQueue(self.config, self.cookbook,
                                    self.options.rebuild, self.options.relax)
 
+    def build_deptree(self):
         # first, add complete dependency tree, with complete
         # task-to-task and task-to-package/task dependency information
-        debug("Building dependency tree")
+        info("Building dependency tree")
         start = datetime.datetime.now()
         for task in self.tasks_todo:
             task = oelite.task.task_name(task)
@@ -274,6 +290,7 @@ class OEliteBaker:
         if self.debug:
             timing_info("Building dependency tree", start)
 
+    def gen_recipe_graph(self):
         # Generate recipe dependency graph
         recipes = set([])
         for task in self.runq.get_tasks():
@@ -285,6 +302,7 @@ class OEliteBaker:
         for recipe in recipes:
             unresolved_recipes.append((recipe, list(recipe.recipe_deps)))
 
+#    def propagate_extra_arch(self):
         # Traverse recipe dependency graph, propagating EXTRA_ARCH on
         # recipe level.
         resolved_recipes = set([])
@@ -310,26 +328,61 @@ class OEliteBaker:
             if not progress:
                 bb.fatal("recipe EXTRA_ARCH resolving deadlocked!")
 
+    def prepare_task_metadata(self):
         # Prepare task metadata for all tasks, loading from cache where
         # possible
-        start = datetime.datetime.now()
         to_prepare = []
+        to_load = []
         for task in self.runq.get_tasks():
             cache = task.recipe.get_cache()
             if cache.has_task(task):
-                cache.load_task(task)
+                to_load.append(task)
             else:
                 to_prepare.append(task)
+        total = len(to_load)
+        count = 0
+        for task in to_load:
+            oelite.util.progress_info(
+               "Loading task summary information", total, count)
+            cache = task.recipe.get_cache()
+            cache.load_task(task, meta=False)
+            count += 1
+        oelite.util.progress_info(
+            "Loading task summary information", total, count)
+        to_load = set()
+        for task in to_prepare:
+            to_load.add(task.recipe)
+        total = len(to_load)
+        count = 0
+        for recipe in to_load:
+            oelite.util.progress_info(
+               "Loading recipe metadata", total, count)
+            recipe.load_meta()
+            count += 1
+        oelite.util.progress_info(
+            "Loading recipe metadata", total, count)
         def factory(task, **kwargs):
             return oelite.task.MetaProcessor(task, **kwargs)
         pool = oelite.process.Pool(factory, "Preparing task metadata")
         failed = pool.run(to_prepare, parallel=self.cookbook.parallel)
+        if failed:
+            for task, exitcode, logfile in failed:
+                print '\nError:', task
+                with open(logfile, 'r') as logfile:
+                    print logfile.read().strip()
+            print '\nErrors in %d tasks'%(len(failed))
+            sys.exit(1)
+        total = len(to_prepare)
+        count = 0
         for task in to_prepare:
+            oelite.util.progress_info(
+               "Loading task summary information", total, count)
             cache = task.recipe.get_cache()
             cache.load_task(task)
-        if self.debug:
-            timing_info("Preparing task metadata", start)
+        oelite.util.progress_info(
+            "Loading task summary information", total, count)
 
+    def calc_task_hashes(self):
         # update runq task list, checking recipe and src hashes and
         # determining which tasks needs to be run
         # examing each task, computing it's hash, and checking if the
@@ -390,24 +443,19 @@ class OEliteBaker:
         if self.debug:
             timing_info("Calculation task metadata hashes", start)
 
-        # FIXME: before cache change, time to calculate hashes for
-        # oe bake busybox was 2.141 seconds
-        # after initial implementation with saving to cache, and then loading
-        # back from cache, time is up to 2.9 seconds
-        # and with caching, down to 0.64 seconds
-        # with caching, this is total time of 2.4 seconds from start to end of
-        # hash calculation!
-
         if count != total:
             print ""
             self.runq.print_metahashable_tasks()
             print "count=%s total=%s"%(count, total)
             die("Circular dependencies I presume.  Add more debug info!")
+        self.total_tasks = total
 
+    def set_task_build_flags(self):
         self.runq.set_task_build_on_nostamp_tasks()
         self.runq.set_task_build_on_retired_tasks()
         self.runq.set_task_build_on_hashdiff()
 
+    def check_prebakes(self):
         # check for availability of prebaked packages, and set package
         # filename for all packages.
         depend_packages = self.runq.get_depend_packages()
@@ -442,13 +490,15 @@ class OEliteBaker:
         # dependencies, we will find one or more recipes that has to
         # be rebuilt, fx. because of a --rebuild flag.
 
+    def propagate_task_build(self):
         self.runq.propagate_runq_task_build()
 
         build_count = self.runq.set_buildhash_for_build_tasks()
         nobuild_count = self.runq.set_buildhash_for_nobuild_tasks()
-        if (build_count + nobuild_count) != total:
+        if (build_count + nobuild_count) != self.total_tasks:
             die("build_count + nobuild_count != total")
 
+    def set_package_filenames(self):
         deploy_dir = self.config.get("PACKAGE_DEPLOY_DIR", True)
         packages = self.runq.get_packages_to_build()
         for package in packages:
@@ -462,6 +512,7 @@ class OEliteBaker:
             debug("will use from build: %s"%(filename))
             self.runq.set_package_filename(package.id, filename)
 
+    def prune_runq(self):
         self.runq.mark_primary_runq_depends()
         self.runq.prune_runq_depends_nobuild()
         self.runq.prune_runq_depends_with_nobody_depending_on_it()
@@ -470,6 +521,7 @@ class OEliteBaker:
         remaining = self.runq.number_of_tasks_to_build()
         debug("%d tasks remains"%remaining)
 
+    def really_bake(self):
         recipes = self.runq.get_recipes_with_tasks_to_build()
         if not recipes:
             info("Nothing to do")
@@ -533,6 +585,7 @@ class OEliteBaker:
         failed_task_list = ""
         while task:
             count += 1
+            task.load_meta()
             debug("")
             debug("Preparing %s"%(task))
             task.prepare(self.runq)

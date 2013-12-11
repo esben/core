@@ -9,51 +9,52 @@ import random
 log = oelite.log.get_logger()
 
 
-# FIXME: refactor into separate recipe and task cache classes, or do something
-# else to create a more natural API.
-# No, refactor into a proper recipe cache, with functions for load and save of tasks.
-
 class MetaCache:
 
-    """Object representing a cache (file) of a parsed OE-lite recipe.
+    """Object representing a cache of a parsed OE-lite recipe.
 
     Each cache can only hold different types of the same recipes.  If a recipe
     file defines both a 'native' and 'machine' type recipe, a single cache
     should be used for holding both of these recipes.  For recipes from
     different recipe files, separate caches must be used.
 
+    A cache consists of multiple files. One file is used for some
+    generic recipe information, recipe metadata is stored in a
+    separate file for each recipe type, and task metadata is stored in
+    a separate file for each recipe type and task.  This is done to
+    make it simple to efficiently load only what is needed.
+
     """
 
-    def __init__(self, config, recipe, recipes=None):
+    ATTRIBUTES = (
+         'token', 'src_signature', 'env_signature', 'mtimes', 'recipe_types')
+
+    def __init__(self, config, recipe):
         """Constructor for OE-lite metadata cache files.
 
         Arguments:
         config -- configuration metadata.
-        recipe -- path to the recipe file, OEliteRecipe or OEliteTask.
-
-        Keyword arguments:
-        recipes -- dictionary of recipes to put in cache, indexed by recipe
-            type as key (ie. 'native', 'machine', and so on), and values of
-            type oelite.MetaData.  If None, recipes will be read from cache.
+        recipe -- path to the recipe file or OEliteRecipe instance.
 
         """
         if isinstance(recipe, oelite.recipe.OEliteRecipe):
             self.recipe_file = recipe.filename
         else:
             self.recipe_file = recipe
-        self.recipe_cache = os.path.join(
+        self.path = os.path.join(
             config.get('PARSERDIR'),
             oelite.path.relpath(self.recipe_file) + ".cache")
 
     def __repr__(self):
         return '%s()'%(self.__class__.__name__)
 
-    #def __iter__(self):
-    #    return self.meta.keys().__iter__()
+    def meta_cache(self, recipe_type):
+        """Get filename of recipe metadata cache file."""
+        return '%s.%s'%(self.path, recipe_type)
 
     def task_cache(self, task):
         """Get filename of task cache file."""
-        return self.recipe_cache + '.%s.%s'%(task.recipe.type, task.name)
+        return '%s.%s.%s'%(self.path, task.recipe.type, task.name)
 
     def exists(self):
         """Check if cache file exists.
@@ -61,7 +62,7 @@ class MetaCache:
         Return True if underlying cache file exists, False otherwise.
 
         """
-        return os.path.exists(self.recipe_cache)
+        return os.path.exists(self.path)
 
     def is_current(self, env_signatures):
         """Check if cache exists and is current.
@@ -76,7 +77,7 @@ class MetaCache:
         """
         if not self.exists():
             return False
-        if not self._preload():
+        if not self.load():
             return False
         try:
             if src_signature() != self.src_signature:
@@ -88,7 +89,7 @@ class MetaCache:
         except AttributeError:
             return False
         for (fn, oepath, old_mtime) in list(self.mtimes):
-            if oepath:
+            if oepath is not None:
                 filepath = oelite.path.which(oepath, fn)
             else:
                 assert os.path.isabs(fn)
@@ -101,15 +102,28 @@ class MetaCache:
                 return False
         return True
 
+    def has_meta(self, recipe_type):
+        """Check if cache has valid recipe metadata cache file."""
+        if not self.load():
+            return False
+        meta_cache = self.meta_cache(recipe_type)
+        if not os.path.exists(meta_cache):
+            return False
+        with open(meta_cache, 'r') as cache_file:
+            token = cPickle.load(cache_file)
+            if token == self.token:
+                return True
+        return False
+
     def has_task(self, task):
         """Check if cache has valid task cache file."""
-        if not self._preload():
+        if not self.load():
             return False
         task_cache = self.task_cache(task)
         if not os.path.exists(task_cache):
             return False
-        with open(task_cache, 'r') as cachefile:
-            token = cPickle.load(cachefile)
+        with open(task_cache, 'r') as cache_file:
+            token = cPickle.load(cache_file)
             if token == self.token:
                 return True
         return False
@@ -117,71 +131,74 @@ class MetaCache:
     def clean(self):
         """Remove the underlying cache file (if it exists)."""
         if self.exists():
-            log.debug("Removing stale metadata cache: %s", self.recipe_cache)
-            os.remove(self.recipe_cache)
+            log.debug("Removing stale metadata cache: %s", self.path)
+            os.remove(self.path)
         # FIXME: rewrite to use glob.glob to remote task cache files also
         return
 
-    def load(self, cookbook=None):
-        """Load OE-lite recipe or metadata from cache file.
+    def load(self):
+        """Load the common recipe attributes from cache."""
+        if getattr(self, '_loaded', False):
+            for attr in self.ATTRIBUTES:
+                assert hasattr(self, attr)
+            return True
+        try:
+            cache_file = open(self.path)
+        except:
+            return False
+        try:
+            for attr in self.ATTRIBUTES:
+                setattr(self, attr, cPickle.load(cache_file))
+        except Exception as e:
+            for attr in self.ATTRIBUTES:
+                if hasattr(self, attr):
+                    delattr(self, attr)
+            return False
+        finally:
+            cache_file.close()
+        self._loaded = True
+        return True
+
+    def load_recipes(self, cookbook=None, meta=True):
+        """Load OE-lite recipe metadata from cache file and add to cookbook.
 
         Arguments:
         cookbook - oelite.cookbook.CookBook instance to create the recipe in.
 
         """
-        if not self._preload():
+        # change to not actually load the recipe metadata, but just
+        # all the stuff needed for adding to cookbook.
+        # the recipe class must be changed to support being created without
+        # the full metadata, and then load this later (on demand) from
+        # the cache file
+        if not self.load():
             return None
         recipes = {}
-        num_recipes = cPickle.load(self.file)
-        for i in xrange(num_recipes):
-            recipe = oelite.recipe.unpickle(
-                self.file, self.recipe_file, cookbook)
-            recipes[recipe.type] = recipe
-        self.file.close()
-        del self.file
+        for recipe_type in self.recipe_types:
+            recipes[recipe_type] = oelite.recipe.OEliteRecipe(
+                self, recipe_type, cookbook)
         return recipes
 
-    def load_task(self, task):
+    def load_task(self, task, meta=True):
         """Load OE-lite task metadata from cache file.
 
         Arguments:
         task - oelite.task.OEliteTask instance to load.
 
         """
-        if not self._preload():
+        if not self.load():
             return False
         task_cache = self.task_cache(task)
-        with open(task_cache, 'r') as cachefile:
-            token = cPickle.load(cachefile)
+        with open(task_cache, 'r') as cache_file:
+            token = cPickle.load(cache_file)
             if token != self.token:
                 return None
-            signature = cPickle.load(cachefile)
-            meta = oelite.meta.dict.unpickle(cachefile)
-        task.signature = signature
-        task.meta = meta
-        return True
-
-    def _preload(self):
-        """Load the cache preample as needed."""
-        attrs = ('src_signature', 'env_signature', 'mtimes', 'token')
-        if hasattr(self, 'file'):
-            for attr in attrs:
-                assert hasattr(self, attr)
-            return True
-        try:
-            self.file = open(self.recipe_cache)
-        except:
-            return False
-        try:
-            for attr in attrs:
-                setattr(self, attr, cPickle.load(self.file))
-        except:
-            for attr in attrs:
-                if hasattr(self, attr):
-                    delattr(self, attr)
-            self.file.close()
-            delattr(self, 'file')
-            return False
+            task.load_summary(cache_file)
+            task.meta_cache_offset = cache_file.tell()
+            if meta:
+                task.load_meta(cache_file)
+            else:
+                task.meta_cache = task_cache
         return True
 
     def save(self, env_signature, recipes):
@@ -194,21 +211,23 @@ class MetaCache:
             type oelite.MetaData.
 
         """
-        oelite.util.makedirs(os.path.dirname(self.recipe_cache))
+        self.src_signature = src_signature()
+        self.env_signature = env_signature
         mtimes = set()
         for type in recipes:
             for mtime in recipes[type].get_input_mtimes():
                 mtimes.add(mtime)
-        token = '%032x'%(random.getrandbits(128))
-        with open(self.recipe_cache, "w") as cachefile:
-            cPickle.dump(src_signature(), cachefile, 2)
-            cPickle.dump(env_signature, cachefile, 2)
-            cPickle.dump(mtimes, cachefile, 2)
-            cPickle.dump(token, cachefile, 2)
-            cPickle.dump(len(recipes), cachefile, 2)
-            for recipe_type, recipe_meta in recipes.items():
-                cPickle.dump(recipe_type, cachefile, 2)
-                recipe_meta.pickle(cachefile)
+        self.mtimes = mtimes
+        self.token = '%032x'%(random.getrandbits(128))
+        self.recipe_types = recipes.keys()
+        oelite.util.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w") as cache_file:
+            for attr in self.ATTRIBUTES:
+                cPickle.dump(getattr(self, attr), cache_file, 2)
+        for recipe_type in self.recipe_types:
+            with open('%s.%s'%(self.path, recipe_type), "w") as cache_file:
+                oelite.recipe.OEliteRecipe.pickle(
+                    cache_file, self.token, recipes[recipe_type])
         return
 
     def save_task(self, task):
@@ -218,16 +237,13 @@ class MetaCache:
         task - oelite.task.OEliteTask instance to save.
 
         """
-        # FIXME: figure out how to handle __dont_cache=True recipes
-        # (like base-version.oe)
-        if self._preload():
+        if self.load():
             token = self.token
         else:
             token = ''
-        with open(self.task_cache(task), 'w') as cachefile:
-            cPickle.dump(token, cachefile, 2)
-            cPickle.dump(task.signature, cachefile, 2)
-            task.meta.pickle(cachefile)
+        with open(self.task_cache(task), 'w') as cache_file:
+            cPickle.dump(token, cache_file, 2)
+            task.save(cache_file, token)
         return
 
 

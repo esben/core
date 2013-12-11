@@ -282,7 +282,7 @@ class Pool(object):
                     continue
                 pid = process.pid
                 if process.exitcode != 0:
-                    failed.append((work, process.exitcode, stdout.name))
+                    self.failed.append((work, process.exitcode, stdout.name))
                 fd = feedback.fileno()
                 if fd in ipc:
                     del ipc[fd]
@@ -311,3 +311,4 @@ class Pool(object):
                 if events & (select.EPOLLHUP | select.EPOLLRDHUP):
                     del ipc[fd]
                     epoll.unregister(fd)
+        return self.failed

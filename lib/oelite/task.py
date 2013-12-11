@@ -13,6 +13,7 @@ import os
 import warnings
 import shutil
 import re
+import cPickle
 
 log = oelite.log.get_logger()
 
@@ -36,6 +37,23 @@ class OEliteTask(object):
     def __str__(self):
         return "%s:%s"%(self.recipe, self.name)
 
+    def save(self, file, token):
+        cPickle.dump(self.signature, file, 2)
+        self.meta.pickle(file)
+
+    def load_summary(self, file):
+        self.signature = cPickle.load(file)
+        return
+
+    def load_meta(self, file=None):
+        if file is None:
+            # self.meta_cache can be gotten from MetaCache.task_cache
+            # but do we have a MetaCache object here?
+            cache = self.recipe.get_cache()
+            file = open(cache.task_cache(self), 'r')
+            file.seek(self.meta_cache_offset)
+        self.meta = oelite.meta.dict.unpickle(file)
+        return
 
     def get_parents(self):
         parents = flatten_single_column_rows(self.cookbook.dbc.execute(
@@ -146,10 +164,6 @@ class OEliteTask(object):
         return
 
 
-    def meta___deprecated(self):
-        # FIXME: try load from cache (including metadata signature)
-        # MetaProcessor.start() here ...
-        return meta
 
 
     def run(self):
@@ -307,7 +321,7 @@ class MetaProcessor(oelite.process.PythonProcess):
         try:
             signature = self.meta.signature() # (dump=dump)
         except oelite.meta.ExpansionError as e:
-            e.msg += " in %s"%(task)
+            e.msg += " in %s"%(self.task)
             e.print_details()
             #raise
             return 1
