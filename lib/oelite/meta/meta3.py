@@ -8,28 +8,26 @@ import logging
 log = logging.getLogger()
 
 
-# TODO: make MetaDict() item values to be MetaVar members, so that you can do
-# stuff like:
-#   DEPENDS['foo'].append_if['HOST_LIBC_uclibc'] = 'libfoobar'
-# To still be able to use eval caching, the cache needs to be aware of this,
-# so that both
-#   DEPENDS.get()
-# and
-#   DEPENDS['foo'].get()
-# can be safely cached, and that changes to DEPENDS['foo'] invalidates both
-# DEPENDS['foo'] cache value, DEPENDS cache value, and anything depending on
-# them.
-# To simplify things, the entire MetaDict might be seen as one item in the
-# cache...
-# Changes might be needed in MetaDict constructor, set, __setitem__,
-# __getitem__, and in MetaDataCache perhaps.
+# MetaDict.update() method.  Add a .updates list attribute, and append to this
+# just as done for .append() and .prepend().  Implement an .amend() method in
+# MetaDict for using this in .get().
 
+# TODO: implement proper error handling on assignment to MetaDict override_if
+# and update_if dicts.  They should only allow None and basetype (and
+# implicitly MetaDict).
+#    def test_override_if_3(self):
+#        d = MetaData()
+#        d['FOO'] = {}
+#        with self.assertRaises(TypeError):
+#            d['FOO'].override_if['USE_foo'] = "foobar"
 
-# TODO: when doing VAR.get() on a MetaDict, all key and values that are
-# strings should be variable expanded.
+# Write unittests demonstrating how to use a dict to hold other variables,
+# fx. a MetaDict(FILES) which holds lists of file globs, with each list being
+# a variable, where overrides, prepends and appends can be used.  This might
+# require support for storing a tree-structure of anonymous MetaVar's...
 
-# TODO: Reimplement MetaData.import_env as method in some other module, as it
-# is not logically part of the MetaData abstraction.
+# TODO: implement MetaDict methods: __contains__, __iter__, __len__, clear,
+# has_key, items, keys, pop, setdefault, update
 
 # TODO: figure out required life-cycle model...  do we need to have
 # pickle/unpickle for parallel parse?
@@ -37,19 +35,12 @@ log = logging.getLogger()
 # TODO: test if builtin filter() can be used for efficient retrieving list of
 # variables with a specific attribute set (True).
 
+# TODO: Reimplement MetaData.import_env as method in some other module, as it
+# is not logically part of the MetaData abstraction.
+
 # TODO: add_hook() method
 
 # TODO: MetaInt
-
-# TODO: MetaDict
-
-# TODO: implement MetaDict methods: __contains__, __iter__, __len__, clear,
-# has_key, items, keys, pop, setdefault, update
-
-# Write unittests demonstrating how to use a dict to hold other variables,
-# fx. a MetaDict(FILES) which holds lists of file globs, with each list being
-# a variable, where overrides, prepends and appends can be used.  This might
-# require support for storing a tree-structure of anonymous MetaVar's...
 
 # TODO: MetaPythonFunc() class.  See also old MetaData.pythonfunc_init(),
 # MetaData.get_pythonfunc_globals(), MetaData.get_pythonfuncs(),
