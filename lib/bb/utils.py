@@ -544,19 +544,3 @@ def copyfile(src, dest, newmtime = None, sstat = None):
         os.utime(dest, (sstat[stat.ST_ATIME], sstat[stat.ST_MTIME]))
         newmtime = sstat[stat.ST_MTIME]
     return newmtime
-
-def which(path, item, direction = 0):
-    """
-    Locate a file in a PATH
-    """
-
-    paths = (path or "").split(':')
-    if direction != 0:
-        paths.reverse()
-
-    for p in paths:
-        next = os.path.join(p, item)
-        if os.path.exists(next):
-            return next
-
-    return ""

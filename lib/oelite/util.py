@@ -176,6 +176,13 @@ def unique_list(seq):
     return [ x for x in seq if x not in seen and not seen_add(x)]
 
 
+def makedirs(path, mode=0777):
+    if os.path.exists(path):
+        return
+    os.makedirs(path, mode)
+    return
+
+
 def touch(path, makedirs=False, truncate=False):
     if truncate:
         mode = 'w'

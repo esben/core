@@ -1,4 +1,5 @@
 from oelite.meta import *
+import oelite.path
 
 import sys
 import copy
@@ -7,7 +8,6 @@ import cPickle
 import operator
 import types
 import os
-import bb.utils
 
 
 def unpickle(file):
