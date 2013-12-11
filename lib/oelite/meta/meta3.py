@@ -24,6 +24,8 @@ log = logging.getLogger()
 # Changes might be needed in MetaDict constructor, set, __setitem__,
 # __getitem__, and in MetaDataCache perhaps.
 
+
+
 # TODO: when doing VAR.get() on a MetaDict, all key and values that are
 # strings should be variable expanded.
 
@@ -71,6 +73,9 @@ class MetaDataStack(object):
     def __str__(self, prefix='\n  '):
         return prefix.join(self.var)
 
+    # FIXME: support push of var.key, perhaps by simply encoding it in
+    # var.name in MetaDict class.
+
     def push(self, var):
         assert isinstance(var, MetaVar)
         if var.name in self.var:
@@ -110,6 +115,9 @@ class MetaDataCache(dict):
         dict.__setitem__(self, key, (value[0], list(value[1])))
 
     def __delitem__(self, key):
+        # FIXME: handle key being in both var and var.key format, and for
+        # var.key, invalidate cache both for var.key and for var, and
+        # everything that depends on them.
         try:
             dict.__delitem__(self, key)
         except KeyError:
@@ -652,6 +660,11 @@ class MetaDict(MetaVar):
     def __setitem__(self, key, value):
         if self.value is None:
             self.value = {}
+        if self.value__contains__(key):
+            self.value[key].set(val)
+            return
+        if type(val) in (str, unicode, list, dict, int, long, bool):
+            MetaVar(self, key, val)
         dict.__setitem__(self.value, key, value)
 
     def __delitem__(self, key):
@@ -1800,6 +1813,13 @@ class TestMetaDict(unittest.TestCase):
         VAR = MetaDict(d, value=None)
         with self.assertRaises(KeyError):
             del VAR['x']
+
+    def test_struct_1(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['x'] = "1"
+        self.assertIsInstance(d['FOO'], MetaDict)
+        self.assertIsInstance(d['FOO']['x'], MetaString)
 
 
 class TestMetaBool(unittest.TestCase):
