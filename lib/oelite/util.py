@@ -144,3 +144,14 @@ def unique_list(seq):
     seen = set()
     seen_add = seen.add
     return [ x for x in seq if x not in seen and not seen_add(x)]
+
+
+def touch(path, makedirs=False, truncate=False):
+    if truncate:
+        mode = 'w'
+    else:
+        mode = 'a'
+    if makedirs:
+        globals()['makedirs'](os.path.dirname(path))
+    with open(path, mode):
+        os.utime(path, None)
