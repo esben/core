@@ -9,8 +9,8 @@ import logging
 log = logging.getLogger()
 
 
-# TODO: implement MetaDict methods: __contains__, __iter__, __len__, clear,
-# has_key, items, keys, pop, setdefault, update
+# TODO: implement MetaDict methods: __len__, clear, has_key, items, keys, pop,
+# setdefault, update
 
 # TODO: TestPythonExpression test cases
 
@@ -740,6 +740,16 @@ class MetaDict(MetaVar):
         if self.value is None:
             raise KeyError(key)
         del self.value[key]
+
+    def __contains__(self, key):
+        value = self.get()
+        if not value:
+            return False
+        else:
+            return self.get().__contains__(key)
+
+    def __iter__(self):
+        return self.get().__iter__()
 
     def set(self, value):
         super(MetaDict, self).set(value)
@@ -2078,6 +2088,28 @@ class TestMetaDict(unittest.TestCase):
         VAR = MetaDict(d, value=None)
         with self.assertRaises(KeyError):
             del VAR['x']
+
+    def test_contains_1(self):
+        d = MetaData()
+        VAR = MetaVar(d, value={'foo': 1})
+        self.assertTrue('foo' in VAR)
+        self.assertFalse('bar' in VAR)
+
+    def test_contains_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, value={'foo': 1})
+        VAR.set(None)
+        self.assertFalse('foo' in VAR)
+
+    def test_iter(self):
+        d = MetaData()
+        VAR = MetaVar(d, value={'foo': 'x', 'bar': 'y'})
+        l = set()
+        for key in VAR:
+            l.add(VAR.get()[key])
+        self.assertTrue('x' in l)
+        self.assertTrue('y' in l)
+        self.assertFalse('z' in l)
 
     def test_struct_1(self):
         d = MetaData()
