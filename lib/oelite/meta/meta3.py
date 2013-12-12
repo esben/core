@@ -8,19 +8,6 @@ import logging
 log = logging.getLogger()
 
 
-# MetaDict.update() method.  Add a .updates list attribute, and append to this
-# just as done for .append() and .prepend().  Implement an .amend() method in
-# MetaDict for using this in .get().
-
-# TODO: implement proper error handling on assignment to MetaDict override_if
-# and update_if dicts.  They should only allow None and basetype (and
-# implicitly MetaDict).
-#    def test_override_if_3(self):
-#        d = MetaData()
-#        d['FOO'] = {}
-#        with self.assertRaises(TypeError):
-#            d['FOO'].override_if['USE_foo'] = "foobar"
-
 # Write unittests demonstrating how to use a dict to hold other variables,
 # fx. a MetaDict(FILES) which holds lists of file globs, with each list being
 # a variable, where overrides, prepends and appends can be used.  This might
@@ -325,7 +312,7 @@ class MetaVar(object):
         else:
             self.value = value
         self.name = name
-        self.override_if = MetaVarDict()
+        self.override_if = OverrideDict()
         if name is not None:
             self.scope[name] = self
 
@@ -383,8 +370,8 @@ class MetaVar(object):
                 value = self.fixup(value)
             if not (isinstance(value, self.basetype) or
                     value is None):
-                raise TypeError("invalid type %s in %s %s"%(
-                        type(value), type(self), self.name))
+                raise TypeError("invalid type in %s %s value: %s"%(
+                        type(self).__name__, self.name, type(value).__name__))
             if isinstance(self, MetaSequence):
                 value = self.amend(value)
             if self.override_if:
@@ -394,8 +381,10 @@ class MetaVar(object):
                         value = self.scope.eval(self.override_if[override])
                         if not (isinstance(value, self.basetype) or
                                 value is None):
-                            raise TypeError("invalid type %s in %s %s"%(
-                                    type(value), type(self), self.name))
+                            raise TypeError(
+                                "invalid type in %s %s override: %s"%(
+                                    type(self).__name__, self.name,
+                                    type(value).__name__))
                         break
                 self.scope.stack.add_dep('OVERRIDES')
             if isinstance(self, MetaSequence):
@@ -422,7 +411,7 @@ class MetaVar(object):
                 continue
             try:
                 attr = getattr(self, slot)
-                if isinstance(attr, MetaVarDict):
+                if isinstance(attr, OverrideDict):
                     obj[slot] = attr.json_encode()
                 elif type(attr) in (str, unicode, int, long, float, bool,
                                     types.NoneType, list, dict):
@@ -432,7 +421,7 @@ class MetaVar(object):
         return obj
 
 
-class MetaVarDict(dict):
+class OverrideDict(dict):
 
     __slots__ = [ 'dict', 'var' ]
 
@@ -440,6 +429,15 @@ class MetaVarDict(dict):
         dict.__init__(self, *args, **kwargs)
 
     def __setitem__(self, key, value):
+        if isinstance(value, MetaVar):
+            value = value.get()
+        if not (value is None or
+                isinstance(value, self.var.basetype) or
+                isinstance(value, types.CodeType) or
+                self.var.is_fixup_type(value)):
+            raise TypeError("cannot set %r override to %s value"%(
+                    self.var.name or type(self.var).__name__,
+                    type(value).__name__))
         del self.var.scope.cache[self.var.name]
         dict.__setitem__(self, key, value)
 
@@ -458,9 +456,9 @@ class MetaSequence(MetaVar):
                 setattr(self, attr, getattr(value, attr))
         else:
             self.prepends = []
-            self.prepend_if = MetaVarDict()
+            self.prepend_if = OverrideDict()
             self.appends = []
-            self.append_if = MetaVarDict()
+            self.append_if = OverrideDict()
         super(MetaSequence, self).__init__(scope, name, value)
 
     def __getitem__(self, index):
@@ -673,7 +671,7 @@ class MetaList(MetaSequence):
 
 class MetaDict(MetaVar):
 
-    __slots__ = [ 'scope', 'update_if' ]
+    __slots__ = [ 'updates', 'update_if' ]
     basetype = dict
     empty = {}
 
@@ -682,7 +680,8 @@ class MetaDict(MetaVar):
         assert (value is None or
                 isinstance(value, MetaDict) or
                 isinstance(value, dict))
-        self.update_if = MetaVarDict()
+        self.updates = []
+        self.update_if = OverrideDict()
         if isinstance(parent, MetaData):
             self.scope = parent
         else:
@@ -720,6 +719,15 @@ class MetaDict(MetaVar):
             raise KeyError(key)
         del self.value[key]
 
+    def set(self, value):
+        super(MetaDict, self).set(value)
+        self.updates = []
+
+    def weak_set(self, value):
+        if self.value is None and not self.updates:
+            del self.scope.cache[self.name]
+            return self.set(value)
+
     def get(self):
         if self.name is not None:
             path = self.name.split('.')
@@ -737,17 +745,23 @@ class MetaDict(MetaVar):
         self.scope.stack.push(self)
         try:
             value = self.scope.eval(self.value)
+            if not (isinstance(value, self.basetype) or
+                    value is None):
+                raise TypeError("invalid type in %s %s value: %s"%(
+                        type(self).__name__, self.name, type(value).__name__))
+            value = self.amend(value)
             if self.override_if:
                 for override in self.scope['OVERRIDES']:
                     if self.override_if.has_key(override):
                         self.scope.stack.clear_deps()
                         value = self.scope.eval(self.override_if[override])
                         break
+                if not (isinstance(value, self.basetype) or
+                        value is None):
+                    raise TypeError("invalid type in %s %s override: %s"%(
+                            type(self).__name__, self.name,
+                            type(value).__name__))
                 self.scope.stack.add_dep('OVERRIDES')
-            if not (isinstance(value, self.basetype) or
-                    value is None):
-                raise TypeError("invalid type %s in %s %s"%(
-                        type(value), type(self), self.name))
             value = self.amend_if(value)
             if value is not None:
                 value = self.scope.eval_dict_values(value)
@@ -757,22 +771,52 @@ class MetaDict(MetaVar):
             self.scope.stack.pop()
         return value
 
+    def update(self, *args, **kwargs):
+        for value in args:
+            if isinstance(value, MetaVar):
+                value = value.get()
+            if value is None:
+                pass
+            elif isinstance(value, types.CodeType):
+                self.updates.append(value)
+            elif isinstance(value, self.basetype):
+                value = self.scope.eval_dict_values(value)
+                self.updates.append(value)
+            else:
+                raise TypeError('cannot update %s with %s'%(
+                        type(self), type(value)))
+        if kwargs:
+            value = {}
+            for key, val in kwargs.iteritems():
+                value[key] = self.scope.eval(val)
+            self.updates.append(value)
+
+    def amend_update(self, value, amend_value):
+        amend_value = self.scope.eval(amend_value)
+        if not amend_value:
+            return value
+        if value is None:
+            value = self.empty
+        if isinstance(amend_value, self.basetype):
+            value.update(amend_value)
+        else:
+            raise TypeError(
+                "unsupported update_if operation: %s to %s"%(
+                    type(amend_value), type(value)))
+        return value
+
+    def amend(self, value):
+        if self.updates:
+            for amend_value in self.updates:
+                value = self.amend_update(value, amend_value)
+        return value
+
     def amend_if(self, value):
         if self.update_if:
             self.scope.stack.add_dep('OVERRIDES')
             for override in reversed(self.scope['OVERRIDES']):
                 if self.update_if.has_key(override):
-                    amend_value = self.scope.eval(self.update_if[override])
-                    if not amend_value:
-                        continue
-                    if value is None:
-                        value = self.empty
-                    if isinstance(amend_value, self.basetype):
-                        value.update(amend_value)
-                    else:
-                        raise TypeError(
-                            "unsupported update_if operation: %s to %s"%(
-                                type(amend_value), type(value)))
+                    value = self.amend_update(value, self.update_if[override])
         return value
 
 
@@ -1046,6 +1090,13 @@ class TestMetaString(unittest.TestCase):
         VAR.prepend('x')
         self.assertEqual(VAR.get(), 'xfoobar')
 
+    def test_prepend_none(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='bar')
+        VAR.prepend('foo')
+        VAR.prepend(None)
+        self.assertEqual(VAR.get(), 'foobar')
+
     def test_prepend_metastring(self):
         d = MetaData()
         VAR = MetaVar(d, value='bar')
@@ -1085,6 +1136,13 @@ class TestMetaString(unittest.TestCase):
         VAR.append('bar')
         VAR.append('x')
         self.assertEqual(VAR.get(), 'foobarx')
+
+    def test_append_none(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='foo')
+        VAR.append('bar')
+        VAR.append(None)
+        self.assertEqual(VAR.get(), 'foobar')
 
     def test_append_metastring(self):
         d = MetaData()
@@ -1957,6 +2015,19 @@ class TestMetaDict(unittest.TestCase):
         d['FOO']['foo'] = d['I']
         self.assertEqual(d['FOO']['foo'].get(), 2)
 
+    def test_weak_set_1(self):
+        d = MetaData()
+        VAR = MetaVar(d, value={'FOO': 'foo'})
+        self.assertEqual(VAR.get()['FOO'], 'foo')
+        VAR.set(None)
+        self.assertIsNone(VAR.get())
+        VAR.weak_set({'BAR': 'bar'})
+        self.assertEqual(VAR.get()['BAR'], 'bar')
+        VAR.weak_set({'HELLO': 'world'})
+        with self.assertRaises(KeyError):
+            VAR.get()['HELLO']
+        self.assertEqual(VAR.get()['BAR'], 'bar')
+
     def test_del_1(self):
         d = MetaData()
         d['FOO'] = { 'foo': 1, 'bar': 2 }
@@ -1996,6 +2067,53 @@ class TestMetaDict(unittest.TestCase):
         self.assertEqual(d['FOO'].get()['x']['y']['z'], 42)
         self.assertEqual(d['FOO']['x']['y'].get()['z'], 42)
 
+    def test_update_1(self):
+        d = MetaData()
+        d['VAR'] = {}
+        d['VAR']['BAR'] = 'bar'
+        d['VAR'].update(FOO='foo')
+        self.assertEqual(d['VAR'].get()['BAR'], 'bar')
+        self.assertEqual(d['VAR'].get()['FOO'], 'foo')
+
+    def test_update_2(self):
+        d = MetaData()
+        d['VAR'] = {}
+        d['VAR']['BAR'] = 'bar'
+        d['VAR'].update({'FOO': 'foo'})
+        self.assertEqual(d['VAR'].get()['BAR'], 'bar')
+        self.assertEqual(d['VAR'].get()['FOO'], 'foo')
+
+    def test_update_3(self):
+        d = MetaData()
+        d['VAR'] = {}
+        d['VAR']['BAR'] = 'bar'
+        V = MetaVar(d, value={'FOO': 'foo'})
+        d['VAR'].update(V)
+        self.assertEqual(d['VAR'].get()['BAR'], 'bar')
+        self.assertEqual(d['VAR'].get()['FOO'], 'foo')
+
+    def test_update_4(self):
+        d = MetaData()
+        d['VAR'] = {}
+        d['VAR']['BAR'] = 'bar'
+        MetaVar(d, 'V', {'FOO': 'foo'})
+        d['VAR'].update(compile('V', '<code>', 'eval'))
+        self.assertEqual(d['VAR'].get()['BAR'], 'bar')
+        self.assertEqual(d['VAR'].get()['FOO'], 'foo')
+
+    def test_update_invalid(self):
+        d = MetaData()
+        d['VAR'] = {}
+        d['VAR']['BAR'] = 'bar'
+        self.assertRaises(TypeError, d['VAR'].update, ([42]))
+
+    def test_update_none(self):
+        d = MetaData()
+        d['VAR'] = {}
+        d['VAR']['BAR'] = 'bar'
+        d['VAR'].update(None)
+        self.assertEqual(d['VAR'].get()['BAR'], 'bar')
+
     def test_override_if_1(self):
         d = MetaData()
         d['FOO'] = {}
@@ -2032,6 +2150,34 @@ class TestMetaDict(unittest.TestCase):
         self.assertEqual(d['FOO'].get()['BAR'], {})
         with self.assertRaises(KeyError):
             d['FOO'].get()['BAR']['bar']
+
+    def test_override_if_str(self):
+        d = MetaData()
+        d['FOO'] = {}
+        with self.assertRaises(TypeError):
+            d['FOO'].override_if['USE_foo'] = "foobar"
+
+    def test_override_if_list(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['foo'] = 42
+        with self.assertRaises(TypeError):
+            d['FOO'].override_if['USE_foo'] = [42]
+
+    def test_override_if_int(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['foo'] = 42
+        with self.assertRaises(TypeError):
+            d['FOO'].override_if['USE_foo'] = 42
+
+    def test_override_if_invalid_code(self):
+        d = MetaData()
+        d['FOO'] = {}
+        d['FOO']['foo'] = 42
+        d['FOO'].override_if['USE_foo'] = compile('42', '<code>', 'eval')
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertRaises(TypeError, d['FOO'].get)
 
     def test_update_if_none(self):
         d = MetaData()
