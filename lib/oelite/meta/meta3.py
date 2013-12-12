@@ -614,7 +614,7 @@ class MetaString(MetaSequence):
 
 class MetaList(MetaSequence):
 
-    __slots__ = [ 'separator', 'expand' ]
+    __slots__ = [ 'separator', 'separator_pattern', 'expand' ]
 
     basetype = list
     empty = []
@@ -637,10 +637,23 @@ class MetaList(MetaSequence):
     def __reversed__(self):
         return self.get().__reversed__()
 
+    def __str__(self):
+        value = self.get()
+        separator = getattr(self, 'separator', ' ')
+        if separator is not None:
+            return separator.join(value)
+        else:
+            return str(value)
+
     def fixup(self, value):
         value = self.scope.expand(value, method=self.expand)
-        ifs = getattr(self, 'separator', ' \t\n')
-        return re.split('[%s]+'%(ifs), string.strip(value, ifs))
+        separator_pattern = getattr(self, 'separator_pattern', '[ \t\n]+')
+        value = re.split(separator_pattern, value)
+        if value[0] == '':
+            value = value[1:]
+        if value[-1] == '':
+            value = value[:-1]
+        return value
 
     def amend(self, value):
         return super(MetaList, self).amend(copy.copy(value))
@@ -1770,8 +1783,20 @@ class TestMetaList(unittest.TestCase):
 
     def test_str(self):
         d = MetaData()
-        VAR = MetaVar(d, value=['foobar'])
-        self.assertEqual(str(VAR), "['foobar']")
+        VAR = MetaVar(d, value=['foo', 'bar'])
+        self.assertEqual(str(VAR), "foo bar")
+
+    def test_str_no_separator(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo', 'bar'])
+        VAR.separator = None
+        self.assertEqual(str(VAR), "['foo', 'bar']")
+
+    def test_str_colon_separator(self):
+        d = MetaData()
+        VAR = MetaVar(d, value=['foo', 'bar'])
+        VAR.separator = ':'
+        self.assertEqual(str(VAR), "foo:bar")
 
     def test_len(self):
         d = MetaData()
