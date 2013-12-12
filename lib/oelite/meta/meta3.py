@@ -386,17 +386,19 @@ class MetaVar(object):
                 raise TypeError("invalid type %s in %s %s"%(
                         type(value), type(self), self.name))
             if isinstance(self, MetaSequence):
-                # FIXME: handle value=None in amend()
                 value = self.amend(value)
             if self.override_if:
                 for override in self.scope['OVERRIDES']:
                     if self.override_if.has_key(override):
                         self.scope.stack.clear_deps()
                         value = self.scope.eval(self.override_if[override])
+                        if not (isinstance(value, self.basetype) or
+                                value is None):
+                            raise TypeError("invalid type %s in %s %s"%(
+                                    type(value), type(self), self.name))
                         break
                 self.scope.stack.add_dep('OVERRIDES')
             if isinstance(self, MetaSequence):
-                # FIXME: handle value=None in amend_if()
                 value = self.amend_if(value)
             if isinstance(value, basestring):
                 value = self.scope.expand(value, method=self.expand)
@@ -1234,6 +1236,13 @@ class TestMetaString(unittest.TestCase):
         VAR.override_if['USE_foo'] = 'foo'
         VAR.override_if['USE_bar'] = 'bar'
         self.assertEqual(VAR.get(), 'foo')
+
+    def test_override_3(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='bar')
+        VAR.override_if['USE_foo'] = compile('[42]', '<code>', 'eval')
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertRaises(TypeError, VAR.get)
 
     def test_prepend_if_1(self):
         d = MetaData()
