@@ -9,39 +9,6 @@ import logging
 log = logging.getLogger()
 
 
-# Write unittests demonstrating how to use a dict to hold other variables,
-# fx. a MetaDict(FILES) which holds lists of file globs, with each list being
-# a variable, where overrides, prepends and appends can be used.  This might
-# require support for storing a tree-structure of anonymous MetaVar's..
-
-# FILES = {}
-# FILES[''] = ['foo bar']
-# FILES['doc'] ['${docdir}']
-# FILES['doc'].override_if['USE_no_docs'] = None
-# PACKAGES = ['doc']
-# PACKAGES.append_if['USE_foo'] = ['foo']
-# 
-# FILES = {}
-# FILES['${PN}'] = ['foo bar']
-# FILES['${PN}-doc'] ['${docdir}']
-# FILES['${PN}-doc'].override_if['USE_no_docs'] = None
-# PACKAGES = ['${PN}-doc']
-# PACKAGES.append_if['USE_foo'] = ['${PN}-foo']
-# 
-# FILES = {}
-# FILES[PN] = ['foo bar']
-# FILES[PN+'-doc'] ['${docdir}']
-# FILES[PN+'-doc'].override_if['USE_no_docs'] = None
-# PACKAGES = [PN+'-doc']
-# PACKAGES.append_if['USE_foo'] = [PN+'-foo']
-# 
-# FILES = {}
-# FILES[PN] = ['foo bar']
-# FILES['%s-doc'%(PN)] ['${docdir}']
-# FILES['%s-doc'%(PN)].override_if['USE_no_docs'] = None
-# PACKAGES = ['%s-doc'%(PN)]
-# PACKAGES.append_if['USE_foo'] = ['%s-foo'%(PN)]
-
 # TODO: implement MetaDict methods: __contains__, __iter__, __len__, clear,
 # has_key, items, keys, pop, setdefault, update
 
@@ -81,8 +48,14 @@ log = logging.getLogger()
 # TODO: include task (True/False) slot/attribute in python and shell func
 # classes
 
+# TODO: figure out a safe way to use PythonExpression in MetaDict keys, or add
+# proper error handling on attempts to do so.
+
 
 class MetaDataRecursiveEval(Exception):
+    pass
+
+class MetaDataDuplicateDictKey(Exception):
     pass
 
 
@@ -201,58 +174,71 @@ class MetaData(dict):
         dict.__delitem__(self, key)
         return var
 
-    def expand_full(self, sub):
-        sub = sub.group(0)
-        name = sub[2:-1]
-        var = dict.__getitem__(self, name)
-        value = var.get()
-        if not isinstance(value, basestring):
-            raise TypeError(
-                "expanded variables must be string: %s is %s"%(
-                    name, type(value)))
-        return value
-
-    def expand_partial(self, sub):
-        sub = sub.group(0)
-        name = sub[2:-1]
-        try:
+    def expand_full(self, value):
+        def expand(sub):
+            sub = sub.group(0)
+            name = sub[2:-1]
             var = dict.__getitem__(self, name)
-        except KeyError:
-            self.stack.add_dep(name)
-            return sub
-        value = var.get()
-        if not isinstance(value, basestring):
-            raise TypeError(
-                "expanded variables must be string: %s is %s"%(
-                    name, type(value)))
-        return value
+            value = var.get()
+            if not isinstance(value, basestring):
+                raise TypeError(
+                    "expanded variables must be string: %s is %s"%(
+                        name, type(value)))
+            return value
+        return re.sub(self.expand_re, expand, value)
 
-    def expand_clean(self, sub):
-        sub = sub.group(0)
-        name = sub[2:-1]
-        try:
-            var = dict.__getitem__(self, name)
-        except KeyError:
-            self.stack.add_dep(name)
-            return ''
-        value = var.get()
-        if not isinstance(value, basestring):
-            raise TypeError(
-                "expanded variables must be string: %s is %s"%(
-                    name, type(value)))
-        return value
+    def expand_partial(self, value):
+        def expand(sub):
+            sub = sub.group(0)
+            name = sub[2:-1]
+            try:
+                var = dict.__getitem__(self, name)
+            except KeyError:
+                self.stack.add_dep(name)
+                return sub
+            value = var.get()
+            if not isinstance(value, basestring):
+                raise TypeError(
+                    "expanded variables must be string: %s is %s"%(
+                        name, type(value)))
+            return value
+        return re.sub(self.expand_re, expand, value)
+
+    def expand_clean(self, value):
+        def expand(sub):
+            sub = sub.group(0)
+            name = sub[2:-1]
+            try:
+                var = dict.__getitem__(self, name)
+            except KeyError:
+                self.stack.add_dep(name)
+                return ''
+            value = var.get()
+            if not isinstance(value, basestring):
+                raise TypeError(
+                    "expanded variables must be string: %s is %s"%(
+                        name, type(value)))
+            return value
+        return re.sub(self.expand_re, expand, value)
 
     expand_re = re.compile(r'\$\{[a-zA-Z_]+\}')
     def expand(self, value, method='full'):
-        if method == 'full':
-            return re.sub(self.expand_re, self.expand_full, value)
-        elif method == 'no':
+        if method == 'no':
             return value
+        elif method == 'full':
+            expand = self.expand_full
         elif method == 'partial':
-            return re.sub(self.expand_re, self.expand_partial, value)
+            expand = self.expand_partial
         elif method == 'clean':
-            return re.sub(self.expand_re, self.expand_clean, value)
-        raise TypeError("method argument must be string")
+            expand = self.expand_clean
+        else:
+            raise TypeError('invalid expand method: %r'%(method))
+        if isinstance(value, basestring):
+            return expand(value)
+        elif isinstance(value, list):
+            return map(expand, value)
+        else:
+            return value
 
     def eval(self, value):
         if isinstance(value, PythonExpression):
@@ -260,11 +246,16 @@ class MetaData(dict):
         if isinstance(value, MetaVar):
             value = value.get()
         if isinstance(value, dict):
-            value = value.copy()
+            expanded = {}
+            for key, val in value.iteritems():
+                key = self.expand(self.eval(key))
+                if key in expanded:
+                    raise MetaDataDuplicateDictKey(key)
+                e = self.eval(val)
+                ee = self.expand(e)
+                expanded[key] = self.expand(self.eval(val))
+            value = expanded
         return value
-
-    def eval_dict_values(self, d):
-        return { k: self.eval(v) for k,v in d.iteritems() }
 
     def __repr__(self):
         return "%s()"%(self.__class__.__name__)
@@ -794,8 +785,6 @@ class MetaDict(MetaVar):
                             type(value).__name__))
                 self.scope.stack.add_dep('OVERRIDES')
             value = self.amend_if(value)
-            if value is not None:
-                value = self.scope.eval_dict_values(value)
             if self.name is not None:
                 self.scope.stack.cache_value(value)
         finally:
@@ -811,7 +800,6 @@ class MetaDict(MetaVar):
             elif isinstance(value, PythonExpression):
                 self.updates.append(value)
             elif isinstance(value, self.basetype):
-                value = self.scope.eval_dict_values(value)
                 self.updates.append(value)
             else:
                 raise TypeError('cannot update %s with %s'%(
@@ -2278,6 +2266,108 @@ class TestMetaDict(unittest.TestCase):
         self.assertEqual(d['FOO']['foo'].get(), 42)
         with self.assertRaises(KeyError):
             d['FOO'].get()['bar']
+
+    def test_eval_1(self):
+        d = MetaData()
+        d['FILES'] = {}
+        d['FILES']['${PN}'] = ['${base_bindir}', '${bindir}']
+        d['FILES']['${PN}-doc'] = ['${docdir}']
+        d['PN'] = 'foo'
+        d['base_bindir'] = '/bin'
+        d['docdir'] = '${datadir}/doc'
+        d['datadir'] = '${prefix}/share'
+        d['prefix'] = '/usr'
+        d['bindir'] = '${prefix}/bin'
+        self.assertEqual(d['FILES'].get(),
+                         {'foo': ['/bin', '/usr/bin'],
+                          'foo-doc': ['/usr/share/doc']})
+
+    def test_eval_2(self):
+        d = MetaData()
+        d['FILES'] = {}
+        d['FILES']['${PN}'] = ['${base_bindir}', '${bindir}']
+        d['FILES']['${PN}-doc'] = ['${docdir}']
+        d['FILES']['${PN}-doc'].override_if['USE_foo'] = []
+        d['PN'] = 'foo'
+        d['base_bindir'] = '/bin'
+        d['docdir'] = '${datadir}/doc'
+        d['datadir'] = '${prefix}/share'
+        d['prefix'] = '/usr'
+        d['bindir'] = '${prefix}/bin'
+        self.assertEqual(d['FILES'].get(),
+                         {'foo': ['/bin', '/usr/bin'],
+                          'foo-doc': ['/usr/share/doc']})
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertEqual(d['FILES'].get(),
+                         {'foo': ['/bin', '/usr/bin'],
+                          'foo-doc': []})
+
+    def test_eval_3(self):
+        d = MetaData()
+        d['FILES'] = {}
+        d['FILES']['${PN}'] = ['${base_bindir}', '${bindir}']
+        d['FILES']['${PN}-doc'] = ['${docdir}']
+        d['FILES']['${PN}-doc'].append_if['USE_foo'] = ['more']
+        d['PN'] = 'foo'
+        d['base_bindir'] = '/bin'
+        d['docdir'] = '${datadir}/doc'
+        d['datadir'] = '${prefix}/share'
+        d['prefix'] = '/usr'
+        d['bindir'] = '${prefix}/bin'
+        self.assertEqual(d['FILES'].get(),
+                         {'foo': ['/bin', '/usr/bin'],
+                          'foo-doc': ['/usr/share/doc']})
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertEqual(d['FILES'].get(),
+                         {'foo': ['/bin', '/usr/bin'],
+                          'foo-doc': ['/usr/share/doc', 'more']})
+
+    def test_eval_4(self):
+        d = MetaData()
+        d['FILES'] = {}
+        d['FILES']['${PN}'] = ['${base_bindir}', '${bindir}']
+        d['FILES']['${PN}-doc'] = ['${docdir}']
+        d['FILES']['${PN}-doc'].append_if['USE_foo'] = ['more']
+        d['PN'] = 'foo'
+        d['base_bindir'] = '/bin'
+        d['docdir'] = '${datadir}/doc'
+        d['datadir'] = '${prefix}/share'
+        d['prefix'] = '/usr'
+        d['bindir'] = '${prefix}/bin'
+        d['FILES'].override_if['USE_foo'] = {}
+        self.assertEqual(d['FILES'].get(),
+                         {'foo': ['/bin', '/usr/bin'],
+                          'foo-doc': ['/usr/share/doc']})
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertEqual(d['FILES'].get(), {})
+
+    def test_eval_5(self):
+        d = MetaData()
+        d['FILES'] = {}
+        d['FILES']['${PN}'] = ['${base_bindir}', '${bindir}']
+        d['FILES']['${PN}-doc'] = ['${docdir}']
+        d['FILES']['${PN}-doc'].append_if['USE_foo'] = ['more']
+        d['PN'] = 'foo'
+        d['base_bindir'] = '/bin'
+        d['docdir'] = '${datadir}/doc'
+        d['datadir'] = '${prefix}/share'
+        d['prefix'] = '/usr'
+        d['bindir'] = '${prefix}/bin'
+        d['FILES'].override_if['USE_foo'] = {}
+        self.assertEqual(d['FILES'].get(),
+                         {'foo': ['/bin', '/usr/bin'],
+                          'foo-doc': ['/usr/share/doc']})
+        d['OVERRIDES'] = ['USE_foo']
+        self.assertEqual(d['FILES'].get(), {})
+
+    def test_eval_duplicate(self):
+        d = MetaData()
+        d['FILES'] = {}
+        d['FILES']['${PN}'] = ['/bin', '/usr/bin']
+        d['FILES']['${PN}-doc'] = ['/usr/share/doc']
+        d['FILES']['foo'] = ['/sbin', '/usr/sbin']
+        d['PN'] = 'foo'
+        self.assertRaises(MetaDataDuplicateDictKey, d['FILES'].get)
 
 
 class TestMetaBool(unittest.TestCase):
