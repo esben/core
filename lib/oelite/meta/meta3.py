@@ -3,6 +3,7 @@ import string
 import re
 import types
 import copy
+import json
 
 import logging
 log = logging.getLogger()
@@ -11,10 +12,40 @@ log = logging.getLogger()
 # Write unittests demonstrating how to use a dict to hold other variables,
 # fx. a MetaDict(FILES) which holds lists of file globs, with each list being
 # a variable, where overrides, prepends and appends can be used.  This might
-# require support for storing a tree-structure of anonymous MetaVar's...
+# require support for storing a tree-structure of anonymous MetaVar's..
+
+# FILES = {}
+# FILES[''] = ['foo bar']
+# FILES['doc'] ['${docdir}']
+# FILES['doc'].override_if['USE_no_docs'] = None
+# PACKAGES = ['doc']
+# PACKAGES.append_if['USE_foo'] = ['foo']
+# 
+# FILES = {}
+# FILES['${PN}'] = ['foo bar']
+# FILES['${PN}-doc'] ['${docdir}']
+# FILES['${PN}-doc'].override_if['USE_no_docs'] = None
+# PACKAGES = ['${PN}-doc']
+# PACKAGES.append_if['USE_foo'] = ['${PN}-foo']
+# 
+# FILES = {}
+# FILES[PN] = ['foo bar']
+# FILES[PN+'-doc'] ['${docdir}']
+# FILES[PN+'-doc'].override_if['USE_no_docs'] = None
+# PACKAGES = [PN+'-doc']
+# PACKAGES.append_if['USE_foo'] = [PN+'-foo']
+# 
+# FILES = {}
+# FILES[PN] = ['foo bar']
+# FILES['%s-doc'%(PN)] ['${docdir}']
+# FILES['%s-doc'%(PN)].override_if['USE_no_docs'] = None
+# PACKAGES = ['%s-doc'%(PN)]
+# PACKAGES.append_if['USE_foo'] = ['%s-foo'%(PN)]
 
 # TODO: implement MetaDict methods: __contains__, __iter__, __len__, clear,
 # has_key, items, keys, pop, setdefault, update
+
+# TODO: TestPythonExpression test cases
 
 # TODO: figure out required life-cycle model...  do we need to have
 # pickle/unpickle for parallel parse?
@@ -224,8 +255,8 @@ class MetaData(dict):
         raise TypeError("method argument must be string")
 
     def eval(self, value):
-        if isinstance(value, types.CodeType):
-            value = eval(value, {}, self)
+        if isinstance(value, PythonExpression):
+            value = eval(value.code, {}, self)
         if isinstance(value, MetaVar):
             value = value.get()
         if isinstance(value, dict):
@@ -298,7 +329,7 @@ class MetaVar(object):
         assert (value is None or
                 isinstance(value, self.basetype) or
                 isinstance(value, type(self)) or
-                isinstance(value, types.CodeType))
+                isinstance(value, PythonExpression))
         self.scope = scope
         if isinstance(value, MetaVar):
             self.scope = scope
@@ -336,7 +367,7 @@ class MetaVar(object):
         if not (isinstance(value, self.basetype) or
                 self.is_fixup_type(value) or
                 value is None or
-                isinstance(value, types.CodeType)):
+                isinstance(value, PythonExpression)):
             raise TypeError("cannot set %r to %s value"%(
                     self, type(value).__name__))
         del self.scope.cache[self.name]
@@ -433,7 +464,7 @@ class OverrideDict(dict):
             value = value.get()
         if not (value is None or
                 isinstance(value, self.var.basetype) or
-                isinstance(value, types.CodeType) or
+                isinstance(value, PythonExpression) or
                 self.var.is_fixup_type(value)):
             raise TypeError("cannot set %r override to %s value"%(
                     self.var.name or type(self.var).__name__,
@@ -485,7 +516,7 @@ class MetaSequence(MetaVar):
         if not (isinstance(value, self.basetype) or
                 self.is_fixup_type(value) or
                 value is None or
-                isinstance(value, types.CodeType)):
+                isinstance(value, PythonExpression)):
             raise TypeError('cannot prepend %s to %s'%(type(value), type(self)))
         del self.scope.cache[self.name]
         self.prepends.append(value)
@@ -496,7 +527,7 @@ class MetaSequence(MetaVar):
         if not (isinstance(value, self.basetype) or
                 self.is_fixup_type(value) or
                 value is None or
-                isinstance(value, types.CodeType)):
+                isinstance(value, PythonExpression)):
             raise TypeError('cannot append %s to %s'%(type(value), type(self)))
         del self.scope.cache[self.name]
         self.appends.append(value)
@@ -777,7 +808,7 @@ class MetaDict(MetaVar):
                 value = value.get()
             if value is None:
                 pass
-            elif isinstance(value, types.CodeType):
+            elif isinstance(value, PythonExpression):
                 self.updates.append(value)
             elif isinstance(value, self.basetype):
                 value = self.scope.eval_dict_values(value)
@@ -832,7 +863,19 @@ class MetaInt(MetaVar):
     basetype = int
 
 
-import json
+class PythonExpression(object):
+
+    __slots__ = [ 'source', 'filename', 'lineno', 'code' ]
+
+    def __init__(self, source, filename=None, lineno=0):
+        assert isinstance(source, basestring)
+        if lineno == 0:
+            self.source = source
+        else:
+            self.source = '\n'*lineno + source
+        self.filename = filename
+        self.code = compile(source, filename or '<unknown>', 'eval')
+
 
 import unittest
 
@@ -1047,34 +1090,40 @@ class TestMetaString(unittest.TestCase):
         VAR = MetaVar(d, value='foo')
         self.assertRaises(TypeError, VAR.set, (42))
 
-    def test_set_code_str(self):
+    def test_set_code_str_1(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
-        VAR.set(compile('"bar"', '<code>', 'eval'))
+        VAR.set(PythonExpression('"bar"'))
+        self.assertEqual(VAR.get(), 'bar')
+
+    def test_set_code_str_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='foo')
+        VAR.set(PythonExpression('"bar"', lineno=42))
         self.assertEqual(VAR.get(), 'bar')
 
     def test_set_code_list(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
-        VAR.set(compile('[1,2]', '<code>', 'eval'))
+        VAR.set(PythonExpression('[1,2]'))
         self.assertRaises(TypeError, VAR.get)
 
     def test_set_code_dict(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
-        VAR.set(compile("{'bar': 42}", '<code>', 'eval'))
+        VAR.set(PythonExpression("{'bar': 42}"))
         self.assertRaises(TypeError, VAR.get)
 
     def test_set_code_bool(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
-        VAR.set(compile("'foo'=='bar'", '<code>', 'eval'))
+        VAR.set(PythonExpression("'foo'=='bar'"))
         self.assertRaises(TypeError, VAR.get)
 
     def test_set_code_int(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
-        VAR.set(compile('6*7', '<code>', 'eval'))
+        VAR.set(PythonExpression('6*7'))
         self.assertRaises(TypeError, VAR.get)
 
     def test_prepend_1(self):
@@ -1113,7 +1162,7 @@ class TestMetaString(unittest.TestCase):
     def test_prepend_code_list(self):
         d = MetaData()
         VAR = MetaVar(d, value='bar')
-        VAR.prepend(value=compile('[42]', '<code>', 'eval'))
+        VAR.prepend(value=PythonExpression('[42]'))
         with self.assertRaises(TypeError):
             VAR.get()
 
@@ -1160,7 +1209,7 @@ class TestMetaString(unittest.TestCase):
     def test_append_code_list(self):
         d = MetaData()
         VAR = MetaVar(d, value='bar')
-        VAR.append(value=compile('[42]', '<code>', 'eval'))
+        VAR.append(value=PythonExpression('[42]'))
         with self.assertRaises(TypeError):
             VAR.get()
 
@@ -1240,19 +1289,19 @@ class TestMetaString(unittest.TestCase):
     def test_set_code(self):
         d = MetaData()
         VAR = MetaVar(d)
-        VAR.set(compile('"foo" + "bar"', '<code>', 'eval'))
+        VAR.set(PythonExpression('"foo" + "bar"'))
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_prepend_code(self):
         d = MetaData()
         VAR = MetaVar(d, value='bar')
-        VAR.prepend(compile('"foo"', '<code>', 'eval'))
+        VAR.prepend(PythonExpression('"foo"'))
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_append_code(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
-        VAR.append(compile('"bar"', '<code>', 'eval'))
+        VAR.append(PythonExpression('"bar"'))
         self.assertEqual(VAR.get(), 'foobar')
 
     def test_set_code_with_metavars(self):
@@ -1260,7 +1309,7 @@ class TestMetaString(unittest.TestCase):
         MetaVar(d, 'FOO', 'foo')
         MetaVar(d, 'BAR', 'bar')
         VAR = MetaVar(d)
-        VAR.set(compile('FOO + " " + BAR', '<code>', 'eval'))
+        VAR.set(PythonExpression('FOO + " " + BAR'))
         value = VAR.get()
         self.assertEqual(value, 'foo bar')
 
@@ -1290,7 +1339,7 @@ class TestMetaString(unittest.TestCase):
     def test_override_3(self):
         d = MetaData()
         VAR = MetaVar(d, value='bar')
-        VAR.override_if['USE_foo'] = compile('[42]', '<code>', 'eval')
+        VAR.override_if['USE_foo'] = PythonExpression('[42]')
         d['OVERRIDES'] = ['USE_foo']
         self.assertRaises(TypeError, VAR.get)
 
@@ -1337,7 +1386,7 @@ class TestMetaString(unittest.TestCase):
         d = MetaData()
         VAR = MetaVar(d, value='x')
         d['OVERRIDES'] = ['USE_foo']
-        VAR.prepend_if['USE_foo'] = compile('[42]', '<code>', 'eval')
+        VAR.prepend_if['USE_foo'] = PythonExpression('[42]')
         self.assertRaises(TypeError, VAR.get)
 
     def test_prepend_if_to_none(self):
@@ -1391,7 +1440,7 @@ class TestMetaString(unittest.TestCase):
         d = MetaData()
         VAR = MetaVar(d, value='x')
         d['OVERRIDES'] = ['USE_foo']
-        VAR.append_if['USE_foo'] = compile('[42]', '<code>', 'eval')
+        VAR.append_if['USE_foo'] = PythonExpression('[42]')
         self.assertRaises(TypeError, VAR.get)
 
     def test_append_if_to_none(self):
@@ -1410,7 +1459,7 @@ class TestMetaString(unittest.TestCase):
     def test_get_invalid_type(self):
         d = MetaData()
         VAR = MetaVar(d, value='')
-        VAR.set(compile('["foo"]', '<code>', 'eval'))
+        VAR.set(PythonExpression('["foo"]'))
         self.assertRaises(TypeError, VAR.get, ())
 
     def test_len(self):
@@ -1439,13 +1488,13 @@ class TestMetaString(unittest.TestCase):
         d = MetaData()
         MetaVar(d, 'FOO', 'foo')
         MetaVar(d, 'BAR', 'bar')
-        MetaVar(d, 'FOOBAR', compile('FOO + BAR', '<code>', 'eval'))
+        MetaVar(d, 'FOOBAR', PythonExpression('FOO + BAR'))
         self.assertEqual(d['FOOBAR'].get(), 'foobar')
 
     def test_eval_stack_recursive(self):
         d = MetaData()
-        FOO = MetaVar(d, 'FOO', compile('BAR', '<code>', 'eval'))
-        BAR = MetaVar(d, 'BAR', compile('FOO', '<code>', 'eval'))
+        FOO = MetaVar(d, 'FOO', PythonExpression('BAR'))
+        BAR = MetaVar(d, 'BAR', PythonExpression('FOO'))
         self.assertRaises(MetaDataRecursiveEval, FOO.get)
 
     def test_var_expand_default_method(self):
@@ -1975,7 +2024,7 @@ class TestMetaDict(unittest.TestCase):
     def test_get_invalid(self):
         d = MetaData()
         d['FOO'] = {}
-        d['FOO'].set(compile('42', '<code>', 'eval'))
+        d['FOO'].set(PythonExpression('42'))
         with self.assertRaises(TypeError):
             d['FOO'].get()
 
@@ -2097,7 +2146,7 @@ class TestMetaDict(unittest.TestCase):
         d['VAR'] = {}
         d['VAR']['BAR'] = 'bar'
         MetaVar(d, 'V', {'FOO': 'foo'})
-        d['VAR'].update(compile('V', '<code>', 'eval'))
+        d['VAR'].update(PythonExpression('V'))
         self.assertEqual(d['VAR'].get()['BAR'], 'bar')
         self.assertEqual(d['VAR'].get()['FOO'], 'foo')
 
@@ -2175,7 +2224,7 @@ class TestMetaDict(unittest.TestCase):
         d = MetaData()
         d['FOO'] = {}
         d['FOO']['foo'] = 42
-        d['FOO'].override_if['USE_foo'] = compile('42', '<code>', 'eval')
+        d['FOO'].override_if['USE_foo'] = PythonExpression('42')
         d['OVERRIDES'] = ['USE_foo']
         self.assertRaises(TypeError, d['FOO'].get)
 
@@ -2202,7 +2251,7 @@ class TestMetaDict(unittest.TestCase):
         d = MetaData()
         d['FOO'] = {}
         d['FOO']['BAR'] = {}
-        d['FOO'].update_if['USE_foo'] = compile('42', '<code>', 'eval')
+        d['FOO'].update_if['USE_foo'] = PythonExpression('42')
         self.assertEqual(d['FOO'].get()['BAR'], {})
         d['OVERRIDES'] = ['USE_foo']
         with self.assertRaises(TypeError):
