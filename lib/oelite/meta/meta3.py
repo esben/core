@@ -524,34 +524,46 @@ class MetaSequence(MetaVar):
             del self.scope.cache[self.name]
             return self.set(value)
 
+    def amend_prepend(self, value, amend_value):
+        amend_value = self.scope.eval(amend_value)
+        if amend_value is None:
+            return value
+        if value is None:
+            value = self.empty
+        if isinstance(amend_value, self.basetype):
+            value = amend_value + value
+        elif self.is_fixup_type(amend_value):
+            value = self.fixup(amend_value) + value
+        else:
+            raise TypeError(
+                "unsupported prepend operation: %s to %s"%(
+                    type(amend_value), type(value)))
+        return value
+
+    def amend_append(self, value, amend_value):
+        amend_value = self.scope.eval(amend_value)
+        if amend_value is None:
+            return value
+        if value is None:
+            value = self.empty
+        if isinstance(amend_value, self.basetype):
+            value = value + amend_value
+        elif self.is_fixup_type(amend_value):
+            value = value + self.fixup(amend_value)
+        else:
+            raise TypeError(
+                "unsupported append operation: %s to %s"%(
+                    type(amend_value), type(value)))
+        return value
+
     def amend(self, value):
         value = copy.copy(value)
         if self.prepends:
             for amend_value in self.prepends:
-                amend_value = self.scope.eval(amend_value)
-                if value is None:
-                    value = self.empty
-                if isinstance(amend_value, self.basetype):
-                    value = amend_value + value
-                elif self.is_fixup_type(amend_value):
-                    value = self.fixup(amend_value) + value
-                else:
-                    raise TypeError(
-                        "unsupported prepend operation: %s to %s"%(
-                            type(amend_value), type(value)))
+                value = self.amend_prepend(value, amend_value)
         if self.appends:
             for amend_value in self.appends:
-                amend_value = self.scope.eval(amend_value)
-                if value is None:
-                    value = self.empty
-                if isinstance(amend_value, self.basetype):
-                    value = value + amend_value
-                elif self.is_fixup_type(amend_value):
-                    value = value + self.fixup(amend_value)
-                else:
-                    raise TypeError(
-                        "unsupported append operation: %s to %s"%(
-                            type(amend_value), type(value)))
+                value = self.amend_append(value, amend_value)
         return value
 
     def amend_if(self, value):
@@ -560,32 +572,12 @@ class MetaSequence(MetaVar):
             self.scope.stack.add_dep('OVERRIDES')
             for override in self.scope['OVERRIDES']:
                 if self.prepend_if.has_key(override):
-                    amend_value = self.scope.eval(self.prepend_if[override])
-                    if value is None:
-                        value = self.empty
-                    if isinstance(amend_value, self.basetype):
-                        value = amend_value + value
-                    elif self.is_fixup_type(amend_value):
-                        value = self.fixup(amend_value) + value
-                    else:
-                        raise TypeError(
-                            "unsupported prepend_if operation: %s to %s"%(
-                                type(amend_value), type(value)))
+                    value = self.amend_prepend(value, self.prepend_if[override])
         if self.append_if:
             self.scope.stack.add_dep('OVERRIDES')
             for override in self.scope['OVERRIDES']:
                 if self.append_if.has_key(override):
-                    amend_value = self.scope.eval(self.append_if[override])
-                    if value is None:
-                        value = self.empty
-                    if isinstance(amend_value, self.basetype):
-                        value += amend_value
-                    elif self.is_fixup_type(amend_value):
-                        value += self.fixup(amend_value)
-                    else:
-                        raise TypeError(
-                            "unsupported append_if operation: %s to %s"%(
-                                type(amend_value), type(value)))
+                    value = self.amend_append(value, self.append_if[override])
         return value
 
 
