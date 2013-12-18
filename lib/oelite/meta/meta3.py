@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import sys
 import string
 import re
@@ -8,14 +10,102 @@ import json
 import logging
 log = logging.getLogger()
 
-
-# TODO: implement MetaDict methods: __len__, clear, has_key, items, keys, pop,
-# setdefault, update
-
-# TODO: TestPythonExpression test cases
+# USE flag design.
+#
+# USE flags are found in the USE MetaDict.
+#     USE['nls'] = False
+# Unset USE flags are None
+#     USE['nls'] = None
+# But for boolean USE flags, both False and None means the flag is unset, and
+# True that the flag is set.
+#
+# Recipes metadata marks a variable as a USE flag, fx.
+#     useflag nls bool
+# which should map to something like
+#     USE['nls'] = MetaBool(d, value=None)
+#     DEFAULT_USE['nls'] = True
+# Further customization of the default values can be done by direct access to
+# the DEFAULT_USE variable.
+#
+# USE flag domains are defined by USE_DOMAINS
+#     USE_DOMAINS = [ 'LOCAL', 'MACHINE', 'DISTRO', 'DEFAULT' ]
+# When a use flag is set, fx. in a distro config file, the particular domain
+# must be activated.
+#     use DISTRO
+#     USE['nls'] = False
+# should map to setting
+#     DISTRO_USE['nls'] = False
+# This way, copy-pase from fx. distro config to machine config, will do the
+# right thing, instead of either using wrong domain or giving a parse error.
+# The use flag domain is only activated as long as the file it was activated
+# in is being parsed.
+#
+# To force/set a recipe specific value for a use flag, simply do
+#     USE['nls'] = True
+#
+# When post processing the recipe metadata, a hook must loop over all the USE
+# variable keys.  For each key, if the value is None, search through the
+# USE_DOMAINS defined, stopping on first matching key.  So if a domain has the
+# key, and value is None, the USE flag is unset.
 
 # TODO: figure out required life-cycle model...  do we need to have
 # pickle/unpickle for parallel parse?
+#
+# Metadata from bakery.conf -> oe-lite.conf -> core.oeclass
+# is always parsed.
+#
+# A signature of resulting "raw" base metadata is needed to decide if all
+# recipes needs to be reparsed, or only those that has changed input file
+# mtimes.  This signature is added to the raw metadata.
+#
+# Signature of imported environment variables must also be included in this
+# raw base metadata and thus the signature of it.
+#
+# As needed, the recipes are parsed, each recipe in a separate process.  The
+# metadata does therefore not need to be copied.  When done, a signature of
+# the resulting recipe metadata is calculated and inserted into the recipe
+# metadata.  The recipe metadata is then serialized into a disk file,
+# preferably JSON format or other human readable format for easier debugging.
+# If needed (hopefully not, but likely), a special summary of the recipe
+# metadata must be written to a separate file, including all the information
+# needed to create the cookbook.
+#
+# Back in the main process, the recipe metadata (or just the summary, if it is
+# implemented) is read in for all recipes, and used to create the cookbook.
+#
+# After the runq is created from the cookbook, all tasks included in the build
+# are read in from cache (JSON) files, if recipe metadata signature (or token)
+# in the file is identical to the recipe metadata.  If cache is invalid, a
+# process is created for each task, and this process finalizes the task
+# metadata (flattening it to FlatMetaData, collapsing all appends, prepends,
+# updates, override_if, and so on, removing all unneeded variables (according
+# to .emit and .omit attributes and such).  The signature of the resulting
+# FlatMetaData is calculated, and this is written to a cache file (JSON)
+# together with the task metadata.
+#
+# For improved debugging support, it would be nice if each variable could be
+# given a signature, so that we can pinpoints exactly what has changed to
+# cause a task to be rebuilt.
+# 
+
+# TODO: implement MetaData.signature() method, for getting/calculating
+# signature of current MetaData values.  Maybe have signature() return a
+# signature including all attributes, appends, prepends, overrides, and so on,
+# so that it can be used for deciding if MetaData is truly the same.  The real
+# task signature will be calculated on a flattened metadata, where only the
+# actual values will be included.
+#
+# Implement a .signature() method for all MetaVar subclasses.  Save the
+# signature in the var, for including in JSON dump.
+
+# TODO: implement MetaData.dump() in one or more output formats.  At least a
+# dump method where the resulting values are shown in a nicely readable format
+# (for oe show).  But it would be nice to also have some kind of more verbose
+# format, with some indication of how the value is derived.
+
+# TODO: FlatMetaData
+
+# TODO: TestPythonExpression test cases
 
 # TODO: test if builtin filter() can be used for efficient retrieving list of
 # variables with a specific attribute set (True).
@@ -32,18 +122,6 @@ log = logging.getLogger()
 # MetaData.get_pythonfunc(), MetaData.get_pythonfunc_code().
 
 # TODO: MetaShellFunc() class
-
-# TODO: implement MetaData.signature() method, for getting/calculating
-# signature of current MetaData values.  Maybe have signature() return a
-# signature including all attributes, appends, prepends, overrides, and so on,
-# so that it can be used for deciding if MetaData is truly the same.  The real
-# task signature will be calculated on a flattened metadata, where only the
-# actual values will be included.
-
-# TODO: implement MetaData.dump() in one or more output formats.  At least a
-# dump method where the resulting values are shown in a nicely readable format
-# (for oe show).  But it would be nice to also have some kind of more verbose
-# format, with some indication of how the value is derived.
 
 # TODO: include task (True/False) slot/attribute in python and shell func
 # classes
@@ -120,7 +198,7 @@ class MetaDataCache(dict):
             dict.__delitem__(self, key)
         except KeyError:
             pass
-        for (name, (value, deps)) in self.items():
+        for (name, (value, deps)) in list(self.items()):
             if key in deps:
                 dict.__delitem__(self, name)
 
@@ -247,7 +325,7 @@ class MetaData(dict):
             value = value.get()
         if isinstance(value, dict):
             expanded = {}
-            for key, val in value.iteritems():
+            for key, val in value.items():
                 key = self.expand(self.eval(key))
                 if key in expanded:
                     raise MetaDataDuplicateDictKey(key)
@@ -346,9 +424,6 @@ class MetaVar(object):
             value.var = self
         object.__setattr__(self, name, value)
 
-    def __repr__(self):
-        return '%s(%s)'%(self.__class__.__name__, self.name or '')
-
     def __str__(self):
         return str(self.get())
 
@@ -398,7 +473,7 @@ class MetaVar(object):
                 value = self.amend(value)
             if self.override_if:
                 for override in self.scope['OVERRIDES']:
-                    if self.override_if.has_key(override):
+                    if override in self.override_if:
                         self.scope.stack.clear_deps()
                         value = self.scope.eval(self.override_if[override])
                         if not (isinstance(value, self.basetype) or
@@ -591,12 +666,12 @@ class MetaSequence(MetaVar):
         if self.prepend_if:
             self.scope.stack.add_dep('OVERRIDES')
             for override in self.scope['OVERRIDES']:
-                if self.prepend_if.has_key(override):
+                if override in self.prepend_if:
                     value = self.amend_prepend(value, self.prepend_if[override])
         if self.append_if:
             self.scope.stack.add_dep('OVERRIDES')
             for override in self.scope['OVERRIDES']:
-                if self.append_if.has_key(override):
+                if override in self.append_if:
                     value = self.amend_append(value, self.append_if[override])
         return value
 
@@ -741,6 +816,13 @@ class MetaDict(MetaVar):
             raise KeyError(key)
         del self.value[key]
 
+    def __len__(self):
+        value = self.get()
+        if not value:
+            return 0
+        else:
+            return value.__len__()
+
     def __contains__(self, key):
         value = self.get()
         if not value:
@@ -784,7 +866,7 @@ class MetaDict(MetaVar):
             value = self.amend(value)
             if self.override_if:
                 for override in self.scope['OVERRIDES']:
-                    if self.override_if.has_key(override):
+                    if override in self.override_if:
                         self.scope.stack.clear_deps()
                         value = self.scope.eval(self.override_if[override])
                         break
@@ -800,6 +882,20 @@ class MetaDict(MetaVar):
         finally:
             self.scope.stack.pop()
         return value
+
+    def items(self):
+        value = self.get()
+        if not value:
+            return []
+        else:
+            return value.items()
+
+    def keys(self):
+        value = self.get()
+        if not value:
+            return []
+        else:
+            return value.keys()
 
     def update(self, *args, **kwargs):
         for value in args:
@@ -844,7 +940,7 @@ class MetaDict(MetaVar):
         if self.update_if:
             self.scope.stack.add_dep('OVERRIDES')
             for override in reversed(self.scope['OVERRIDES']):
-                if self.update_if.has_key(override):
+                if override in self.update_if:
                     value = self.amend_update(value, self.update_if[override])
         return value
 
@@ -867,12 +963,17 @@ class PythonExpression(object):
 
     def __init__(self, source, filename=None, lineno=0):
         assert isinstance(source, basestring)
-        if lineno == 0:
-            self.source = source
-        else:
-            self.source = '\n'*lineno + source
+        self.source = source
+        if lineno != 0:
+            source = '\n'*lineno + source
         self.filename = filename
         self.code = compile(source, filename or '<unknown>', 'eval')
+
+    def __repr__(self):
+        return 'PythonExpression(%r)'%(self.source)
+
+    def __str__(self):
+        return self.source
 
 
 import unittest
@@ -2101,6 +2202,36 @@ class TestMetaDict(unittest.TestCase):
         VAR.set(None)
         self.assertFalse('foo' in VAR)
 
+    def test_len_1(self):
+        d = MetaData()
+        d['FOO'] = { 'foo': 11, 'bar': 22 }
+        self.assertEqual(len(d['FOO']), 2)
+
+    def test_len_2(self):
+        d = MetaData()
+        d['FOO'] = {}
+        self.assertEqual(len(d['FOO']), 0)
+
+    def test_items_1(self):
+        d = MetaData()
+        d['FOO'] = { 'foo': 1, 'bar': 2 }
+        self.assertEqual(d['FOO'].items(), [('foo', 1), ('bar', 2)])
+
+    def test_items_2(self):
+        d = MetaData()
+        d['FOO'] = {}
+        self.assertEqual(d['FOO'].items(), [])
+
+    def test_keys_1(self):
+        d = MetaData()
+        d['FOO'] = { 'foo': 1, 'bar': 2 }
+        self.assertEqual(d['FOO'].keys(), ['foo', 'bar'])
+
+    def test_keys_2(self):
+        d = MetaData()
+        d['FOO'] = {}
+        self.assertEqual(d['FOO'].keys(), [])
+
     def test_iter(self):
         d = MetaData()
         VAR = MetaVar(d, value={'foo': 'x', 'bar': 'y'})
@@ -2528,6 +2659,27 @@ class TestMetaBool(unittest.TestCase):
         FOO = MetaBool(d, 'FOO', None)
         FOO.weak_set(True)
         self.assertEqual(FOO.get(), True)
+
+
+class TestPythonExpression(unittest.TestCase):
+
+    def setUp(self):
+        pass
+
+    def test_init(self):
+        e = PythonExpression('21 * 2')
+
+    def test_repr(self):
+        e = PythonExpression('21 * 2')
+        self.assertEqual(repr(e), "PythonExpression('21 * 2')")
+
+    def test_str(self):
+        e = PythonExpression('21 * 2')
+        self.assertEqual(str(e), "21 * 2")
+
+    def test_code(self):
+        e = PythonExpression('21 * 2')
+        self.assertEqual(eval(e.code), 42)
 
 
 class TestJSON(unittest.TestCase):
