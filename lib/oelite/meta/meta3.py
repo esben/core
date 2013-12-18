@@ -86,7 +86,7 @@ log = logging.getLogger()
 # For improved debugging support, it would be nice if each variable could be
 # given a signature, so that we can pinpoints exactly what has changed to
 # cause a task to be rebuilt.
-# 
+#
 
 # TODO: implement MetaData.signature() method, for getting/calculating
 # signature of current MetaData values.  Maybe have signature() return a
@@ -128,6 +128,37 @@ log = logging.getLogger()
 
 # TODO: figure out a safe way to use PythonExpression in MetaDict keys, or add
 # proper error handling on attempts to do so.
+
+
+import hashlib
+
+class MetaHasher(object):
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.m = hashlib.md5()
+
+    def update(self, value):
+        #print(value)
+        if type(value) in (int, float, str, unicode, dict, list):
+            self.m.update('%r\0'%(value))
+        elif isinstance(value, PythonExpression):
+            self.m.update('%r\0'%(value))
+        else:
+            raise TypeError('cannot hash %s object'%(type(value).__name__))
+
+    def digest(self):
+        return self.m.hexdigest()
+
+
+def signature_slots(cls):
+    slots = set(getattr(cls, '__slots__', [])).difference(
+        getattr(cls, 'nohash_slots', []))
+    for base in cls.__bases__:
+        slots.update(signature_slots(base))
+    return slots
 
 
 class MetaDataRecursiveEval(Exception):
@@ -493,6 +524,22 @@ class MetaVar(object):
         finally:
             self.scope.stack.pop()
         return value
+
+    def signature(self, m=None):
+        if m is None:
+            m = MetaHasher()
+        for slot in sorted(signature_slots(self.__class__)):
+            value = getattr(self, slot, None)
+            if value is None:
+                continue
+            # FIXME: instead of just getting the repr of the value, check if
+            # the value is a MetaVar instance, and in that case, use
+            # class.__name__(signature), and if not and the value is iterable,
+            # iterate over all the members, so that MetaVar instance in it are
+            # also called with .signature() instead of using the repr which is
+            # likely not to be good enough.
+            m.update('%s=%r\n'%(slot, value))
+        return m
 
     def json_encode(self):
         import inspect
@@ -2064,6 +2111,32 @@ class TestMetaList(unittest.TestCase):
         FOO.weak_set(['bar'])
         self.assertEqual(FOO.get(), ['foo'])
 
+    def test_signature_1(self):
+        d = MetaData()
+        FOO = MetaList(d, 'FOO', ['foo'])
+        print(FOO.signature().digest())
+
+    def test_signature_2(self):
+        d = MetaData()
+        FOO = MetaList(d, 'FOO')
+        FOO.set(PythonExpression("['bar']"))
+        FOO.prepend('x')
+        FOO.append('y')
+        FOO.override_if['foo'] = [ 1 ]
+        FOO.override_if['bar'] = [ 42, 7 ]
+        sig1 = FOO.signature().digest()
+        FOO.set([666])
+        sig2 = FOO.signature().digest()
+        FOO.set(PythonExpression("['bar']"))
+        FOO.prepend('x')
+        FOO.append('y')
+        sig3 = FOO.signature().digest()
+        self.assertEqual(sig1, sig3)
+        self.assertNotEqual(sig1, sig2)
+        print(sig1)
+        print(sig2)
+        print(sig3)
+
 
 class TestMetaDict(unittest.TestCase):
 
@@ -2531,6 +2604,17 @@ class TestMetaDict(unittest.TestCase):
         d['FILES']['foo'] = ['/sbin', '/usr/sbin']
         d['PN'] = 'foo'
         self.assertRaises(MetaDataDuplicateDictKey, d['FILES'].get)
+
+    def test_signature_1(self):
+        d = MetaData()
+        FOO = MetaVar(d, 'FOO', {'foo': 42, 'bar': 7})
+        sig1 = FOO.signature().digest()
+        FOO['bar'] = 666
+        sig2 = FOO.signature().digest()
+        FOO['bar'] = 7
+        sig3 = FOO.signature().digest()
+        self.assertNotEqual(sig1, sig2)
+        self.assertEqual(sig1, sig3)
 
 
 class TestMetaBool(unittest.TestCase):
