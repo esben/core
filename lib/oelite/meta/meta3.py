@@ -11,6 +11,46 @@ import json
 import logging
 log = logging.getLogger()
 
+# TODO: implement MetaVar.print() with a similar calling convention as
+# print(), which shows output as
+#
+# FOO = 'bar'
+#
+# And add a source=True/False (default False) to enable output like
+#
+# # FOO = BAR + ['x'] + ['y', 'z'] + BAZ
+# FOO = ['bar', 'x', 'y', 'z', 'baz']
+#
+# and
+#
+# # FOO = "Hello $WORLD" + "!" + BAR
+# FOO = "Hello world!"
+
+# TODO: implement MetaData.print() with a similar calling convention as
+# print(), which shows output as
+#
+# FOO = 'bar'
+# BAR = 42
+#
+# Implemented on top of a MetaVar.print() function.
+#
+# Also add variants of both of these to show the variable "source" value
+# also.
+
+# TODO: MetaInt
+
+# TODO: MetaPythonFunc() class.  See also old MetaData.pythonfunc_init(),
+# MetaData.get_pythonfunc_globals(), MetaData.get_pythonfuncs(),
+# MetaData.get_pythonfunc(), MetaData.get_pythonfunc_code().
+
+# TODO: MetaShellFunc() class
+
+# TODO: include task (True/False) slot/attribute in python and shell func
+# classes
+
+# TODO: figure out a safe way to use PythonExpression in MetaDict keys, or add
+# proper error handling on attempts to do so.
+
 # USE flag design.
 #
 # USE flags are found in the USE MetaDict.
@@ -89,31 +129,18 @@ log = logging.getLogger()
 # cause a task to be rebuilt.
 #
 
-# TODO: implement MetaData.signature() method, for getting/calculating
-# signature of current MetaData values.  Maybe have signature() return a
-# signature including all attributes, appends, prepends, overrides, and so on,
-# so that it can be used for deciding if MetaData is truly the same.  The real
-# task signature will be calculated on a flattened metadata, where only the
-# actual values will be included.
+# TODO: When a mtime difference for a recipe is detected, the recipe metadata
+# will be reparsed.  Back in the baker process, the (re)parsed metdata is
+# compared to the previous metadata (if available, loading it from old cache
+# file), and based on metadata signature being changed, decide if the old
+# (task) cache can still be used, or if we have to regenerate that.
 #
-# Implement a .signature() method for all MetaVar subclasses.  Save the
-# signature in the var, for including in JSON dump.
-
-# TODO: implement MetaData.dump() in one or more output formats.  At least a
-# dump method where the resulting values are shown in a nicely readable format
-# (for oe show).  But it would be nice to also have some kind of more verbose
-# format, with some indication of how the value is derived.
+# Also, when metadata is different, add a manifest command for telling which
+# variables have changed in a specific recipe (or task?) metadata since last
+# time.  Optionally, allowing to specify a specific metadata dump dir.  Add a
+# manifest command for generating a new metadata dump/cache dir for later
+# comparision.
 #
-# MetaData.print() with a similar calling convention as print(), which shows
-# output as
-#
-# FOO = 'bar'
-# BAR = 42
-#
-# Implemented on top of a MetaVar.print() function.
-#
-# Also add variants of both of these to show the "unexpanded" variable value
-# also.
 
 # TODO: FlatMetaData
 
@@ -125,22 +152,9 @@ log = logging.getLogger()
 
 # TODO: add_hook() method
 
-# TODO: MetaInt
-
-# TODO: MetaPythonFunc() class.  See also old MetaData.pythonfunc_init(),
-# MetaData.get_pythonfunc_globals(), MetaData.get_pythonfuncs(),
-# MetaData.get_pythonfunc(), MetaData.get_pythonfunc_code().
-
-# TODO: MetaShellFunc() class
-
-# TODO: include task (True/False) slot/attribute in python and shell func
-# classes
-
-# TODO: figure out a safe way to use PythonExpression in MetaDict keys, or add
-# proper error handling on attempts to do so.
-
 
 import hashlib
+import pprint
 
 class MetaHasher(object):
 
@@ -155,12 +169,21 @@ class MetaHasher(object):
         self.m.update(value)
 
     def update(self, value):
-        self.update_raw(repr(self.hash_repr(value)))
+        if isinstance(value, dict):
+            self.update_raw(pprint.pformat(self.hash_repr(value)))
+        else:
+            self.update_raw(repr(self.hash_repr(value)))
 
     @staticmethod
     def hash_repr(value):
-        if type(value) in (int, float, str, unicode, dict, list,
-                           PythonExpression):
+        if isinstance(value, unicode):
+            return value.encode('utf-8')
+        elif type(value) == dict:
+            return dict(map(lambda (k, v): (
+                        (str(k) if isinstance(k, unicode) else k),v),
+                            value.items()))
+        elif type(value) in (int, float, str, dict, list,
+                             PythonExpression):
             return value
         elif isinstance(value, MetaVar):
             return value.signature()
@@ -181,6 +204,9 @@ class MetaHasher(object):
             return self.m.hexdigest() == other
         else:
             return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
 
 def hash_slots(cls):
@@ -263,7 +289,7 @@ class MetaDataCache(dict):
             if key in deps:
                 dict.__delitem__(self, name)
 
-    def json_encode(self):
+    def json_obj(self):
         return { '__jsonclass__': [self.__class__.__name__, [self]] }
 
 
@@ -278,14 +304,14 @@ class MetaData(dict):
             self.stack = MetaDataStack(self.cache)
             MetaList(self, 'OVERRIDES', [])
         elif isinstance(init, MetaData):
-            for name,var in init.items():
+            for name,var in init.iteritems():
                 var.copy(self)
             self.cache = init.cache.copy()
             self.stack = MetaDataStack(self.cache)
         elif isinstance(init, dict):
             self.cache = MetaDataCache()
             self.stack = MetaDataStack(self.cache)
-            for name,var in init.items():
+            for name,var in init.iteritems():
                 MetaVar(self, name, var)
             if not 'OVERRIDES' in self:
                 MetaList(self, 'OVERRIDES', [])
@@ -386,7 +412,7 @@ class MetaData(dict):
             value = value.get()
         if isinstance(value, dict):
             expanded = {}
-            for key, val in value.items():
+            for key, val in value.iteritems():
                 key = self.expand(self.eval(key))
                 if key in expanded:
                     raise MetaDataDuplicateDictKey(key)
@@ -399,26 +425,43 @@ class MetaData(dict):
     def __repr__(self):
         return "%s()"%(self.__class__.__name__)
 
+    def __eq__(self, other):
+        if isinstance(other, MetaData):
+            return self.signature() == other.signature()
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
     def signature(self, t=str):
         if t == str:
             m = hashlib.md5()
-            for name,var in sorted(self.items(), key=lambda x: x[0]):
+            for name,var in sorted(self.iteritems(), key=lambda x: x[0]):
                 m.update('%s:%s\n'%(name, var.signature()))
             m = m.hexdigest()
         elif t == dict:
             m = {}
-            for name,var in self.items():
-                m[name] = var.signature()
+            for name,var in self.iteritems():
+                m[str(name)] = var.signature()
         else:
             raise TypeError("invalid type argument t: %s"%(t))
         return m
 
-    def json_encode(self):
-        def metavar_encode(obj):
-            return obj.json_encode()
-        attrs = { '__jsonclass__': [self.__class__.__name__] }
-        attrs['cache'] = self.cache.json_encode()
-        return json.dumps([attrs, self], default=metavar_encode)
+    def dumps(self, *args, **kwargs):
+        obj = {
+            '__jsonclass__': [self.__class__.__name__],
+            'cache': self.cache.json_obj(),
+            'dict': dict(self),
+        }
+        kwargs['default'] = MetaVar.json_encode
+        return json.dumps(obj, *args, **kwargs)
+
+    @staticmethod
+    def loads(s, *args, **kwargs):
+        d = MetaData()
+        kwargs['object_hook'] = d.json_decode
+        return json.loads(s, *args, **kwargs)
 
     def json_decode(self, obj):
         try:
@@ -435,11 +478,18 @@ class MetaData(dict):
         except IndexError:
             kwargs = {}
         if issubclass(constructor, MetaVar):
-            name = obj.pop('name')
+            instance_name = name = obj.pop('name')
             instance = constructor(self, name, *args, **kwargs)
+        elif issubclass(constructor, MetaData):
+            # Update (replace) the MetaData dict with the decoded variables
+            assert len(self) == len(obj['dict'])
+            dict.update(self, obj['dict'])
+            assert len(self) == len(obj['dict'])
+            del obj['dict']
+            instance = self
         else:
             instance = constructor(*args, **kwargs)
-        for name, value in obj.items():
+        for name, value in obj.iteritems():
             setattr(instance, name, value)
         return instance
 
@@ -586,13 +636,18 @@ class MetaVar(object):
                 m.update(map(m.hash_repr, value))
             elif isinstance(value, dict):
                 m.update(dict(map(lambda e: (e[0], m.hash_repr(e[1])),
-                                  value.items())))
+                                  value.iteritems())))
             else:
                 m.update(value)
             m.update_raw('\n')
         return m
 
-    def json_encode(self):
+    @staticmethod
+    def json_encode(var):
+        assert isinstance(var, MetaVar)
+        return var.json_obj()
+
+    def json_obj(self):
         import inspect
         slots = set()
         for cls in inspect.getmro(self.__class__):
@@ -607,7 +662,7 @@ class MetaVar(object):
             try:
                 attr = getattr(self, slot)
                 if isinstance(attr, OverrideDict):
-                    obj[slot] = attr.json_encode()
+                    obj[slot] = attr.json_obj()
                 elif type(attr) in (str, unicode, int, long, float, bool,
                                     types.NoneType, list, dict):
                     obj[slot] = attr
@@ -636,7 +691,7 @@ class OverrideDict(dict):
         del self.var.scope.cache[self.var.name]
         dict.__setitem__(self, key, value)
 
-    def json_encode(self):
+    def json_obj(self):
         return { '__jsonclass__': [self.__class__.__name__, [self]] }
 
 
@@ -1077,6 +1132,20 @@ class PythonExpression(object):
 import unittest
 
 
+#class TestCase(unittest.TestCase):
+#
+#    def setUp(self):
+#        self.addTypeEqualityFunc(MetaData, self.assertMetaDataEqual)
+#
+#    def assertMetaDataEqual(self, x, y, msg=None):
+#        print('foobar')
+#        if x.signature() == y.signature():
+#            return True
+#        else:
+#            # FIXME: add detailed signature diff information to msg
+#            raise self.failureException(msg)
+
+
 class TestMetaData(unittest.TestCase):
 
     def setUp(self):
@@ -1240,6 +1309,11 @@ class TestMetaData(unittest.TestCase):
         with self.assertRaises(TypeError):
             d.signature(t=42)
 
+    def test_signature_8(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        self.assertFalse(src == 42)
+
 
 class TestMetaVar(unittest.TestCase):
 
@@ -1338,6 +1412,12 @@ class TestMetaVar(unittest.TestCase):
         d['x'] = 'Hello world'
         sig = d['x'].signature()
         self.assertFalse(sig == 42)
+
+    def test_signature_3(self):
+        d = MetaData()
+        d['x'] = 'Hello world'
+        sig = d['x'].signature()
+        self.assertTrue(sig != 42)
 
 
 class TestMetaString(unittest.TestCase):
@@ -2930,32 +3010,28 @@ class TestJSON(unittest.TestCase):
     def test_1(self):
         src = MetaData()
         MetaVar(src, 'FOO', 'foo')
-        dst = MetaData()
-        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst = MetaData.loads(src.dumps())
         self.assertEqual(dst['FOO'].get(), 'foo')
 
     def test_appends(self):
         src = MetaData()
         MetaVar(src, 'FOO', 'foo')
         src['FOO'].append('bar')
-        dst = MetaData()
-        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst = MetaData.loads(src.dumps())
         self.assertEqual(dst['FOO'].get(), 'foobar')
 
     def test_prepends(self):
         src = MetaData()
         MetaVar(src, 'FOO', 'bar')
         src['FOO'].prepend('foo')
-        dst = MetaData()
-        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst = MetaData.loads(src.dumps())
         self.assertEqual(dst['FOO'].get(), 'foobar')
 
     def test_override_if_1(self):
         src = MetaData()
         MetaVar(src, 'FOO', 'foo')
         src['FOO'].override_if['USE_bar'] = 'bar'
-        dst = MetaData()
-        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst = MetaData.loads(src.dumps())
         dst['OVERRIDES'].append(['USE_bar'])
         self.assertEqual(src['FOO'].get(), 'foo')
         self.assertEqual(dst['FOO'].get(), 'bar')
@@ -2965,8 +3041,7 @@ class TestJSON(unittest.TestCase):
         MetaVar(src, 'FOO', 'foo')
         src['FOO'].override_if['USE_bar'] = 'bar'
         src['FOO'].get()
-        dst = MetaData()
-        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst = MetaData.loads(src.dumps())
         dst['OVERRIDES'].append(['USE_bar'])
         self.assertEqual(src['FOO'].get(), 'foo')
         self.assertEqual(dst['FOO'].get(), 'bar')
@@ -2975,8 +3050,7 @@ class TestJSON(unittest.TestCase):
         src = MetaData()
         MetaVar(src, 'FOO', 'bar')
         src['FOO'].prepend_if['USE_bar'] = 'foo'
-        dst = MetaData()
-        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst = MetaData.loads(src.dumps())
         dst['OVERRIDES'].append(['USE_bar'])
         self.assertEqual(src['FOO'].get(), 'bar')
         self.assertEqual(dst['FOO'].get(), 'foobar')
@@ -2985,11 +3059,83 @@ class TestJSON(unittest.TestCase):
         src = MetaData()
         MetaVar(src, 'FOO', 'foo')
         src['FOO'].append_if['USE_bar'] = 'bar'
-        dst = MetaData()
-        json.loads(src.json_encode(), object_hook=dst.json_decode)
+        dst = MetaData.loads(src.dumps())
         dst['OVERRIDES'].append(['USE_bar'])
         self.assertEqual(src['FOO'].get(), 'foo')
         self.assertEqual(dst['FOO'].get(), 'foobar')
+
+    def test_signature_1(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src_json = src.dumps()
+        dst = MetaData.loads(src_json)
+        self.assertEqual(src, dst)
+
+    def test_signature_2(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        dst = MetaData.loads(src.dumps())
+        src['FOO'].set('bar')
+        self.assertNotEqual(src, dst)
+
+    def test_signature_3(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        dst = MetaData.loads(src.dumps())
+        src['FOO'].override_if['nothing'] = 'bar'
+        self.assertNotEqual(src, dst)
+
+    def test_signature_4(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src['FOO'].override_if['nothing'] = 'bar'
+        dst = MetaData.loads(src.dumps())
+        self.assertEqual(src, dst)
+
+    def test_signature_5(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src['FOO'].override_if['nothing'] = 'bar'
+        dst = MetaData.loads(src.dumps())
+        self.assertEqual(src['FOO'].signature(), dst['FOO'].signature())
+        self.assertEqual(src, dst)
+        del src['FOO'].override_if['nothing']
+        self.assertNotEqual(src, dst)
+
+    def test_signature_6(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src['FOO'].append_if['nothing'] = '1'
+        src['FOO'].override_if['nothing'] = 'bar'
+        src['FOO'].prepend_if['nothing'] = '2'
+        dst = MetaData.loads(src.dumps())
+        self.assertEqual(src, dst)
+        del src['FOO'].append_if['nothing']
+        self.assertNotEqual(src, dst)
+        src['FOO'].append_if['nothing'] = '1'
+        self.assertEqual(src, dst)
+
+    def test_signature_7(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src['FOO'].append_if['nothing'] = '1'
+        src['FOO'].override_if['nothing'] = 'bar'
+        src['FOO'].prepend_if['nothing'] = '2'
+        dst = MetaData.loads(src.dumps())
+        self.assertFalse(src != dst)
+        del src['FOO'].append_if['nothing']
+        self.assertTrue(src != dst)
+
+    def test_signature_8(self):
+        src = MetaData()
+        MetaVar(src, 'FOO', 'foo')
+        src['FOO'].append_if['nothing'] = '1'
+        src['FOO'].override_if['nothing'] = 'bar'
+        src['FOO'].prepend_if['nothing'] = '2'
+        dst = MetaData.loads(src.dumps())
+        self.assertTrue(src == dst)
+        del src['FOO'].append_if['nothing']
+        self.assertFalse(src == dst)
 
 
 if __name__ == '__main__':
