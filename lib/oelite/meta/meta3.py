@@ -11,9 +11,15 @@ import json
 import logging
 log = logging.getLogger()
 
+
 # TODO: FlatMetaData or function in MetaData to return flattened metadata,
 # ie. a dict of basic types to use as global for python function and for
 # setting up env for shell functions.
+
+# TODO: add MetaList.remove() and MetaList.remove_if() functions.  The removes
+# should be applied in amend, after applying prepends and appends, and similar
+# for *_if.  Removal of non-existant value should not cause any error, but
+# just silently ignored (which is different from list.remove()).
 
 # TODO: MetaInt
 
@@ -22,11 +28,6 @@ log = logging.getLogger()
 # MetaData.get_pythonfunc(), MetaData.get_pythonfunc_code().
 
 # TODO: MetaShellFunc() class
-
-# TODO: add MetaList.remove() and MetaList.remove_if() functions.  The removes
-# should be applied in amend, after applying prepends and appends, and similar
-# for *_if.  Removal of non-existant value should not cause any error, but
-# just silently ignored (which is different from list.remove()).
 
 # TODO: include task (True/False) slot/attribute in python and shell func
 # classes
@@ -189,6 +190,13 @@ class MetaHasher(object):
 
     def __ne__(self, other):
         return not self.__eq__(other)
+
+
+def all_slots(cls):
+    slots = set(getattr(cls, '__slots__', []))
+    for base in cls.__bases__:
+        slots.update(all_slots(base))
+    return slots
 
 
 def hash_slots(cls):
@@ -475,7 +483,7 @@ class MetaData(dict):
         for name, value in obj.iteritems():
             setattr(instance, name, value)
         return instance
-    
+
     def print(self, details=False, sep=None, file=sys.stdout):
         if sep is None:
             sep = '\n' if details else ''
@@ -525,11 +533,17 @@ class MetaVar(object):
         self.scope = scope
         if isinstance(value, MetaVar):
             self.scope = scope
-            for attr in MetaVar.__slots__:
-                if attr in ('scope', 'name', 'fixup_types'):
+            for attr in all_slots(self.__class__):
+                if attr in ('scope', 'name'):
                     continue
                 try:
-                    setattr(self, attr, getattr(value, attr))
+                    attr_val = getattr(value, attr)
+                    if isinstance(attr_val, OverrideDict):
+                        attr_val = attr_val.copy()
+                        attr_val.var = self
+                    elif isinstance(attr_val, collections.Container):
+                        attr_val = copy.deepcopy(attr_val)
+                    setattr(self, attr, attr_val)
                 except AttributeError:
                     pass
         else:
@@ -539,8 +553,11 @@ class MetaVar(object):
         if name is not None and not '.' in name:
             self.scope[name] = self
 
-    def copy(self, scope):
-        self.__class__(scope, self.name, self)
+    def copy(self, scope=None):
+        if scope is None:
+            return self.__class__(self.scope, None, self)
+        else:
+            return self.__class__(scope, self.name, self)
 
     def __setattr__(self, name, value):
         if name in ('override_if', 'prepend_if', 'append_if', 'update_if'):
@@ -774,14 +791,13 @@ class MetaSequence(MetaVar):
         self.appends.append(value)
 
     def __add__(self, other):
-        value = self.get()
-        if isinstance(other, type(self)):
-            other = other.get()
-        elif not isinstance(other, self.basetype):
+        if not (isinstance(other, type(self)) or
+                  isinstance(other, self.basetype)):
             raise TypeError(
                 "cannot concatenate %s and %s objects"%(
                     type(self), type(other)))
-        value += other
+        value = self.copy()
+        value.append(other)
         return MetaVar(self.scope, value=value)
 
     def set(self, value):
@@ -936,17 +952,15 @@ class MetaList(MetaSequence):
 
     def __add__(self, other):
         value = self.get()
-        if isinstance(other, type(self)):
-            other = other.get()
-        elif isinstance(other, MetaString):
-            other = other.get()
-        if self.is_fixup_type(other):
-            other = self.fixup(other)
-        if not isinstance(other, self.basetype):
+        if not (isinstance(other, type(self)) or
+                isinstance(other, MetaString) or
+                self.is_fixup_type(other) or
+                isinstance(other, self.basetype)):
             raise TypeError(
                 "cannot concatenate %s and %s objects"%(
                     type(self), type(other)))
-        value += other
+        value = self.copy()
+        value.append(other)
         return MetaVar(self.scope, value=value)
 
 
@@ -1734,17 +1748,39 @@ class TestMetaString(unittest.TestCase):
         with self.assertRaises(TypeError):
             VAR += False
 
+    def test_add_2(self):
+        d = MetaData()
+        VAR = MetaVar(d, value='foo')
+        ADDED = VAR + VAR
+        self.assertEqual(ADDED.get(), 'foofoo')
+        self.assertEqual(VAR.get(), 'foo')
+
     def test_add_3(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
         ADDED = VAR + VAR + VAR
         self.assertEqual(ADDED.get(), 'foofoofoo')
+        self.assertEqual(VAR.get(), 'foo')
 
     def test_add_3_mixed(self):
         d = MetaData()
         VAR = MetaVar(d, value='foo')
         ADDED = VAR + 'bar' + VAR
         self.assertEqual(ADDED.get(), 'foobarfoo')
+        self.assertEqual(VAR.get(), 'foo')
+
+    def test_add_4(self):
+        d = MetaData()
+        d['FOO'] = 'foo'
+        self.assertEqual(d['FOO'].get(), 'foo')
+        d['FOO'].override_if['x'] = 'xxx'
+        d['OVERRIDES'] = ['x']
+        self.assertEqual(d['FOO'].get(), 'xxx')
+        d['FOO'] += 'bar'
+        d['OVERRIDES'] = []
+        self.assertEqual(d['FOO'].get(), 'foobar')
+        d['OVERRIDES'] = ['x']
+        self.assertEqual(d['FOO'].get(), 'xxx')
 
     def test_set_invalid_attr(self):
         d = MetaData()
