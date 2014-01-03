@@ -12,6 +12,8 @@ import logging
 log = logging.getLogger()
 
 
+# TODO: implement dynvar handling, for correct signature generation without
+# disturbance for changing DATE, TIME, MANIFEST_ORIGIN and so on.
 
 # TODO: Implement handling of PythonExpression.cacheable, so that
 # PythonExpression variables can be allowed to be cached or required to be
