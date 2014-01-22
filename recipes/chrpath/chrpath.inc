@@ -2,6 +2,9 @@ RECIPE_TYPES = "native cross sdk-cross"
 
 inherit autotools make-vpath
 
+C_DEPENDS_HOST = "gcc-bootstrap"
+C_DEPENDS_TARGET = ""
+
 # Avoid circular dependencies
 CHRPATH_DEPENDS:native = ""
 CHRPATH_DEPENDS_TARGET = ""
@@ -26,3 +29,7 @@ do_chrpath[postfuncs] += "${DO_CHRPATH_NATIVE_POST}"
 def do_chrpath_native_post(d):
     tmpdir = d.get("TMP_BINDIR")
     shutil.rmtree(tmpdir)
+
+# Local Variables:
+# mode: python
+# End:
