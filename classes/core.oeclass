@@ -4,6 +4,7 @@
 ## needed for building.
 
 inherit arch
+inherit utils
 inherit stage
 inherit package
 
