@@ -8,7 +8,7 @@
 ## @useflag ramdisk_image_name Set the resulting image name.
 ## @useflag ramdisk_image_compression Set the compression for the ramdisk image.
 
-IMAGE_BASENAME ?= "${MACHINE_ID}-${PN}"
+IMAGE_BASENAME ?= "${PN}-${MACHINE_ID}"
 inherit image image_mdev image_inetd image_crontab image_makedevs image_inittab image_fstab
 
 CLASS_FLAGS += "ramdisk_image \
