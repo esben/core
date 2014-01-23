@@ -18,7 +18,7 @@
 ##      the three USE flags ubifs_image_leb_size, ubifs_image_max_leb_cnt, and
 ##      ubifs_image_min_io_size.
 
-IMAGE_BASENAME ?= "${MACHINE_ID}-${PN}"
+IMAGE_BASENAME ?= "${TARGET_MACHINE_ID}-${PN}"
 
 inherit image
 

@@ -4,7 +4,7 @@
 ##
 ## @var IMAGE_BASENAME Set to a different basename.
 
-IMAGE_BASENAME ?= "${MACHINE_ID}-${PN}"
+IMAGE_BASENAME ?= "${TARGET_MACHINE_ID}-${PN}"
 
 inherit image
 
