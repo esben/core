@@ -24,8 +24,7 @@ RECIPE_TYPES = "machine"
 
 PROVIDES_${PN} += "rootfs"
 
-RDEPENDS_ROOTFS ?= "busybox base-hostname"
-CLASS_RDEPENDS += "${RDEPENDS_ROOTFS}"
+RDEPENDS ?= "busybox base-hostname"
 
 #Extra RDEPENDS
 CLASS_FLAGS += "rootfs_extra_rdepends"
