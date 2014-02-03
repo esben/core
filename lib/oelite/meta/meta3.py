@@ -495,16 +495,17 @@ class MetaData(dict):
     def __ne__(self, other):
         return not self.__eq__(other)
 
-    def signature(self, t=str):
+    def signature(self, t=str, dynvars=[]):
         if t == str:
             m = hashlib.md5()
             for name,var in sorted(self.iteritems(), key=lambda x: x[0]):
-                m.update('%s:%s\n'%(name, var.signature()))
+                # FIXME: skip if name is in dynvars
+                m.update('%s:%s\n'%(name, var.signature(dynvars=dynvars)))
             m = m.hexdigest()
         elif t == dict:
             m = {}
             for name,var in self.iteritems():
-                m[str(name)] = var.signature()
+                m[str(name)] = var.signature(dynvars=dynvars)
         else:
             raise TypeError("invalid type argument t: %s"%(t))
         return m
@@ -762,7 +763,7 @@ class MetaVar(object):
         # And clear the cached value and it's dependency information
         self.cache = None
 
-    def signature(self, m=None):
+    def signature(self, m=None, dynvars=[]):
         if m is None:
             m = MetaHasher()
         m.update_raw(self.__class__.__name__ + '\n')
