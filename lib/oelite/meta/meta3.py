@@ -20,11 +20,6 @@ log = logging.getLogger()
 # kept uncacheable. Any variable that depends on one or more uncacheable
 # expressions also become uncacheable.
 
-# TODO: MetaDataCache must be a mapping from variable NAME to value and a list
-# of variable references (and not simply names).  This way any anonymous
-# variables that were referenced can be tracked, so that changes to fx. a
-# MetaString value of a MetaDict can invalidate the containing MetaDict.
-
 # TODO: Ensure that lists set or added to MetaList are copied, so that they
 # cannot be changed through other references, and thus circumventing the
 # cache.  Same for Addition of MetaList or any other container types.
@@ -46,6 +41,13 @@ log = logging.getLogger()
 # should be applied in amend, after applying prepends and appends, and similar
 # for *_if.  Removal of non-existant value should not cause any error, but
 # just silently ignored (which is different from list.remove()).
+
+# TODO: Add support for explicit exclusion of selected variables from
+# expansion. This should be preferred in favour of legacy partial expansion,
+# and perhaps even fully replace it, as it is more predictable, and allows
+# proper error handling of missing variables that actually were meant to be
+# defined as well as avoiding replacing variables that were really meant to be
+# left in unexpanded.
 
 # TODO: MetaInt
 
@@ -110,6 +112,19 @@ log = logging.getLogger()
 # recipes needs to be reparsed, or only those that has changed input file
 # mtimes.  This signature is added to the raw metadata.
 #
+# This raw base metadata signature should not care about dynvars, ie. all
+# variables are just taken "as is" (this implies that DATE, TIME, DATETIME
+# variables are not set at this point, but much later, so that it is always
+# set, even when re-using cached recipe metadata).  This makes it easier to
+# handle changes to manifest origin and other dynvars, requring full reparse
+# when they are changed.
+#
+# Setting of DATETIME variable should be moved to datetime.oeclass file, and
+# explicitly inherited only by those classes/recipes that really need it.
+# This class should setup a hook to set DATE, TIME and DATETIME to common
+# values for all recipes, but after caching is resolved, so that all recipes
+# get the same values, no matter if they were reparsed or read from cache.
+#
 # Signature of imported environment variables must also be included in this
 # raw base metadata and thus the signature of it.
 #
@@ -160,6 +175,9 @@ log = logging.getLogger()
 # is not logically part of the MetaData abstraction.
 
 # TODO: add_hook() method
+
+# TODO: Add API and internal documentation to all classes, attributes and
+# methods!
 
 
 import hashlib
@@ -1687,7 +1705,10 @@ class TestMetaVar(unittest.TestCase):
     def test_is_solitary_3(self):
         d = MetaData()
         d['FOO'] = 'foo'
+        d['BAR'] = ''
+        d['BAR'].set("bar")
         self.assertTrue(d.is_solitary(d['FOO']))
+        self.assertTrue(d.is_solitary(d['BAR']))
 
     def test_is_solitary_4a(self):
         d = MetaData()
