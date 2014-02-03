@@ -69,38 +69,45 @@ log = logging.getLogger()
 #     USE['nls'] = False
 # Unset USE flags are None
 #     USE['nls'] = None
-# But for boolean USE flags, both False and None means the flag is unset, and
-# True that the flag is set.
 #
 # Recipes metadata marks a variable as a USE flag, fx.
-#     useflag nls bool
-# which should map to something like
-#     USE['nls'] = MetaBool(d, value=None)
-#     DEFAULT_USE['nls'] = True
-# Further customization of the default values can be done by direct access to
-# the DEFAULT_USE variable.
+#     USE['nls'] = MetaBool()
+# Default value can be done by direct access to the DEFAULT_USE MetaDict
+# variable.
+#
+# Fx.
+#     USE['foobar'] = MetaString()
+#     DEFAULT_USE['foobar'] = "Hello world"
 #
 # USE flag domains are defined by USE_DOMAINS
-#     USE_DOMAINS = [ 'LOCAL', 'MACHINE', 'DISTRO', 'DEFAULT' ]
+#     USE_DOMAINS = [ 'OVERRIDE', 'LOCAL', 'MACHINE', 'DISTRO', 'DEFAULT' ]
 # When a use flag is set, fx. in a distro config file, the particular domain
 # must be activated.
-#     use DISTRO
-
+#     include('${DISTRO}.conf', use='DISTRO')
+# causing (in the distro configuration file)
 #     USE['nls'] = False
-# should map to setting
+# to map to
 #     DISTRO_USE['nls'] = False
-# This way, copy-pase from fx. distro config to machine config, will do the
+# This way, copy-paste from fx. distro config to machine config, will do the
 # right thing, instead of either using wrong domain or giving a parse error.
 # The use flag domain is only activated as long as the file it was activated
 # in is being parsed.
 #
+# When no domain is activated (fx. in a class or recipe file), the USE
+# variable maps to USE flag declaration (as shown above).  And direct
+# assignment to OVERRIDE_USE and DEFAULT_USE MetaDict variables are allowed.
+#
+# In all other use domains, no direct access to OVERRIDE_USE, LOCAL_USE,
+# MACHINE_USE, DISTRO_USE and DEFAULT_USE is allowed.
+#
 # To force/set a recipe specific value for a use flag, simply do
-#     USE['nls'] = True
+#     OVERRIDE_USE['nls'] = True
 #
 # When post processing the recipe metadata, a hook must loop over all the USE
 # variable keys.  For each key, if the value is None, search through the
 # USE_DOMAINS defined, stopping on first matching key.  So if a domain has the
-# key, and value is None, the USE flag is unset.
+# key, and value is None, the USE flag is unset.  If the key found is not of
+# the expected type, an error/exception should be raised.
 
 # TODO: figure out required life-cycle model...  do we need to have
 # pickle/unpickle for parallel parse?
@@ -1123,6 +1130,9 @@ class MetaDict(MetaVar):
             elif isinstance(val, MetaVar):
                 var = val
                 var.name = name
+            else:
+                raise TypeError("cannot assign %s value to MetaDict"%(
+                        type(val)))
         self.value[key] = var
 
     def __getitem__(self, key):
