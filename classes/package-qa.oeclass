@@ -431,7 +431,7 @@ def do_packageqa(d):
             return abs_flag in flags
 
     def is_lib(s):
-        return (s.startswith("lib"))
+        return (s.startswith("lib") or s == "ld-so")
 
     ok = True
     for pkg in (d.get("PACKAGES") or "").split():
@@ -487,8 +487,11 @@ def do_packageqa(d):
 
         sonamify_re = re.compile("(lib.*)\.so.*")
         sonamify_re2 = re.compile(r"(.*?)(-[\d\.]*)?$")
+        sonamify_ld_linux_re = re.compile("ld-linux.*\.so.*")
         def sonamify(soname):
             def _sonamify(s):
+                if sonamify_ld_linux_re.match(s):
+                    return "ld-so"
                 s = s.lower().replace("_","-")
                 m = sonamify_re.match(s)
                 if not m:
