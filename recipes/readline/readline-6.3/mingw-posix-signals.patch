@@ -1,0 +1,56 @@
+--- readline-6.3/signals.c~orig	2015-04-29 11:11:05.752751243 +0000
++++ readline-6.3/signals.c	2015-04-29 11:20:55.977787069 +0000
+@@ -27,7 +27,11 @@
+ 
+ #include <stdio.h>		/* Just for NULL.  Yuck. */
+ #include <sys/types.h>
++#if defined (__MINGW32__)
++# define _POSIX
+ #include <signal.h>
++# undef _POSIX
++#endif
+ 
+ #if defined (HAVE_UNISTD_H)
+ #  include <unistd.h>
+--- readline-6.3/input.c~orig	2015-04-29 13:28:04.931177538 +0200
++++ readline-6.3/input.c	2015-04-29 13:29:18.983007022 +0200
+@@ -45,7 +45,11 @@
+ #  include "ansi_stdlib.h"
+ #endif /* HAVE_STDLIB_H */
+ 
++#if defined (__MINGW32__)
++# define _POSIX
+ #include <signal.h>
++# undef _POSIX
++#endif
+ 
+ #include "posixselect.h"
+ 
+--- readline-6.3/rltty.c~orig	2015-04-29 13:28:11.691343578 +0200
++++ readline-6.3/rltty.c	2015-04-29 13:29:11.462820206 +0200
+@@ -27,7 +27,11 @@
+ #endif
+ 
+ #include <sys/types.h>
++#if defined (__MINGW32__)
++# define _POSIX
+ #include <signal.h>
++# undef _POSIX
++#endif
+ #include <errno.h>
+ #include <stdio.h>
+ 
+--- readline-6.3/complete.c~orig	2015-04-29 13:28:17.075475959 +0200
++++ readline-6.3/complete.c	2015-04-29 13:29:03.081612260 +0200
+@@ -31,7 +31,11 @@
+ #  include <sys/file.h>
+ #endif
+ 
++#if defined (__MINGW32__)
++# define _POSIX
+ #include <signal.h>
++# undef _POSIX
++#endif
+ 
+ #if defined (HAVE_UNISTD_H)
+ #  include <unistd.h>

@@ -9,6 +9,8 @@ LICENSE = "GPL-3.0+"
 
 require readline.inc
 
+SRC_URI += "file://mingw-posix-signals.patch"
+
 # Local Variables:
 # mode: python
 # End:
