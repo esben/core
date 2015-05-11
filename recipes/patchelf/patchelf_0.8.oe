@@ -1,0 +1,5 @@
+SRC_URI = "http://nixos.org/releases/patchelf/patchelf-0.8/patchelf-${PV}.tar.bz2"
+
+inherit autotools
+
+RECIPE_TYPES = "native cross sdk-cross"
