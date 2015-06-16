@@ -6,3 +6,10 @@ SRC_URI += "file://typedef-caddr.patch"
 
 SRC_URI += "file://rootsbindir.patch"
 EXTRA_OECONF += "libc_cv_rootsbindir=${base_sbindir}"
+
+# glibc 2.21 seems to break with -O3 on x86_64 (gcc 5.1.0)
+# http://archive.linuxfromscratch.org/mail-archives/lfs-dev/2015-April/070130.html
+# and it looks like also i686...
+# so let's just drop down to -O2 for now.
+BUILD_CFLAGS_OPT = "-O2"
+SDK_CFLAGS_OPT = "-O2"
