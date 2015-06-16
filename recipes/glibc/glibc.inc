@@ -49,6 +49,11 @@ EXTRA_OECONF += "\
 	--cache-file=config.cache \
 "
 
+# Build and install the obsolete RPC code.  This works around a rather
+# innocent build problem with gcc 5.1.0, but might also help building stuff
+# by providing this backward compatibility.
+EXTRA_OECONF += " --enable-obsolete-rpc"
+
 #ld-linux do NOT support RPATH. See get-dynamic-info.h within the glibc src
 do_chrpath[postfuncs] += "do_chrpath_fix_ld"
 do_chrpath_fix_ld[expand] = 3
