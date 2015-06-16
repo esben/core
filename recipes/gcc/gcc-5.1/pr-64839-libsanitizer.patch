@@ -1,0 +1,325 @@
+Source: git://gcc.gnu.org/git/gcc.git
+Upstream: Merged
+Reason: Fix building with default glibc
+
+Upstream commit below was modified, dropping the change in
+libsanitizer/ChangeLog, which does not apply cleanly.
+
+commit e0965b31a3eb3e96403e46cb797d27e9ae141310
+Author: ygribov <ygribov@138bc75d-0d04-0410-961f-82ee72b054a4>
+Date:   Mon Apr 13 08:59:55 2015 +0000
+
+    2015-04-13  Yury Gribov  <y.gribov@samsung.com>
+    
+    	PR sanitizer/64839
+    
+    	libsanitizer/
+    	* sanitizer_common/sanitizer_platform.h: Cherry pick
+    	upstream r234470.
+    	* sanitizer_common/sanitizer_platform_limits_posix.cc: Ditto.
+    	* configure.ac (RPC_DEFS): Check for precense of RPC headers.
+    	* sanitizer_common/Makefile.am (DEFS): Pass info to compiler.
+    	* Makefile.in: Regenerate.
+    	* asan/Makefile.in: Regenerate.
+    	* config.h.in: Regenerate.
+    	* configure: Regenerate.
+    	* interception/Makefile.in: Regenerate.
+    	* libbacktrace/Makefile.in: Regenerate.
+    	* lsan/Makefile.in: Regenerate.
+    	* sanitizer_common/Makefile.in: Regenerate.
+    	* tsan/Makefile.in: Regenerate.
+    	* ubsan/Makefile.in: Regenerate.
+    
+    
+    git-svn-id: svn+ssh://gcc.gnu.org/svn/gcc/trunk@222043 138bc75d-0d04-0410-961f-82ee72b054a4
+
+diff --git a/libsanitizer/Makefile.in b/libsanitizer/Makefile.in
+index 79a1be6..2f5f1bd 100644
+--- a/libsanitizer/Makefile.in
++++ b/libsanitizer/Makefile.in
+@@ -181,6 +181,7 @@ PACKAGE_URL = @PACKAGE_URL@
+ PACKAGE_VERSION = @PACKAGE_VERSION@
+ PATH_SEPARATOR = @PATH_SEPARATOR@
+ RANLIB = @RANLIB@
++RPC_DEFS = @RPC_DEFS@
+ SED = @SED@
+ SET_MAKE = @SET_MAKE@
+ SHELL = @SHELL@
+diff --git a/libsanitizer/asan/Makefile.in b/libsanitizer/asan/Makefile.in
+index e61ceda..a56c6b1 100644
+--- a/libsanitizer/asan/Makefile.in
++++ b/libsanitizer/asan/Makefile.in
+@@ -190,6 +190,7 @@ PACKAGE_URL = @PACKAGE_URL@
+ PACKAGE_VERSION = @PACKAGE_VERSION@
+ PATH_SEPARATOR = @PATH_SEPARATOR@
+ RANLIB = @RANLIB@
++RPC_DEFS = @RPC_DEFS@
+ SED = @SED@
+ SET_MAKE = @SET_MAKE@
+ SHELL = @SHELL@
+diff --git a/libsanitizer/config.h.in b/libsanitizer/config.h.in
+index e4b2786..7195840 100644
+--- a/libsanitizer/config.h.in
++++ b/libsanitizer/config.h.in
+@@ -43,6 +43,9 @@
+ /* Define to 1 if you have the <memory.h> header file. */
+ #undef HAVE_MEMORY_H
+ 
++/* Define to 1 if you have the <rpc/xdr.h> header file. */
++#undef HAVE_RPC_XDR_H
++
+ /* Define to 1 if you have the <stdint.h> header file. */
+ #undef HAVE_STDINT_H
+ 
+@@ -67,6 +70,9 @@
+ /* Define to 1 if you have the <sys/types.h> header file. */
+ #undef HAVE_SYS_TYPES_H
+ 
++/* Define to 1 if you have the <tirpc/rpc/xdr.h> header file. */
++#undef HAVE_TIRPC_RPC_XDR_H
++
+ /* Define to 1 if you have the <unistd.h> header file. */
+ #undef HAVE_UNISTD_H
+ 
+diff --git a/libsanitizer/configure b/libsanitizer/configure
+index 9ded4cc..1efbd53 100755
+--- a/libsanitizer/configure
++++ b/libsanitizer/configure
+@@ -607,6 +607,7 @@ LIBOBJS
+ TSAN_TARGET_DEPENDENT_OBJECTS
+ LIBBACKTRACE_SUPPORTED_FALSE
+ LIBBACKTRACE_SUPPORTED_TRUE
++RPC_DEFS
+ BACKTRACE_SUPPORTS_THREADS
+ BACKTRACE_USES_MALLOC
+ ALLOC_FILE
+@@ -12021,7 +12022,7 @@ else
+   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
+   lt_status=$lt_dlunknown
+   cat > conftest.$ac_ext <<_LT_EOF
+-#line 12024 "configure"
++#line 12025 "configure"
+ #include "confdefs.h"
+ 
+ #if HAVE_DLFCN_H
+@@ -12127,7 +12128,7 @@ else
+   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
+   lt_status=$lt_dlunknown
+   cat > conftest.$ac_ext <<_LT_EOF
+-#line 12130 "configure"
++#line 12131 "configure"
+ #include "confdefs.h"
+ 
+ #if HAVE_DLFCN_H
+@@ -16341,6 +16342,47 @@ $as_echo "#define HAVE_GETEXECNAME 1" >>confdefs.h
+ 
+ fi
+ 
++# Check for rpc/xdr.h
++for ac_header in rpc/xdr.h
++do :
++  ac_fn_c_check_header_mongrel "$LINENO" "rpc/xdr.h" "ac_cv_header_rpc_xdr_h" "$ac_includes_default"
++if test "x$ac_cv_header_rpc_xdr_h" = x""yes; then :
++  cat >>confdefs.h <<_ACEOF
++#define HAVE_RPC_XDR_H 1
++_ACEOF
++
++fi
++
++done
++
++if test x"$ac_cv_header_rpc_xdr_h" = xyes; then
++  rpc_defs="$rpc_defs -DHAVE_RPC_XDR_H=1"
++else
++  rpc_defs="$rpc_defs -DHAVE_RPC_XDR_H=0"
++fi
++
++# Check for tirpc/rpc/xdr.h
++for ac_header in tirpc/rpc/xdr.h
++do :
++  ac_fn_c_check_header_mongrel "$LINENO" "tirpc/rpc/xdr.h" "ac_cv_header_tirpc_rpc_xdr_h" "$ac_includes_default"
++if test "x$ac_cv_header_tirpc_rpc_xdr_h" = x""yes; then :
++  cat >>confdefs.h <<_ACEOF
++#define HAVE_TIRPC_RPC_XDR_H 1
++_ACEOF
++
++fi
++
++done
++
++if test x"$ac_cv_header_tirpc_rpc_xdr_h" = xyes; then
++  rpc_defs="$rpc_defs -DHAVE_TIRPC_RPC_XDR_H=1"
++else
++  rpc_defs="$rpc_defs -DHAVE_TIRPC_RPC_XDR_H=0"
++fi
++
++RPC_DEFS=$rpc_defs
++
++
+  if test "x${BACKTRACE_SUPPORTED}x${BACKTRACE_USES_MALLOC}" = "x1x0"; then
+   LIBBACKTRACE_SUPPORTED_TRUE=
+   LIBBACKTRACE_SUPPORTED_FALSE='#'
+diff --git a/libsanitizer/configure.ac b/libsanitizer/configure.ac
+index 031c271..11e2d99 100644
+--- a/libsanitizer/configure.ac
++++ b/libsanitizer/configure.ac
+@@ -312,6 +312,24 @@ if test "$have_getexecname" = "yes"; then
+   AC_DEFINE(HAVE_GETEXECNAME, 1, [Define if getexecname is available.])
+ fi
+ 
++# Check for rpc/xdr.h
++AC_CHECK_HEADERS(rpc/xdr.h)
++if test x"$ac_cv_header_rpc_xdr_h" = xyes; then
++  rpc_defs="$rpc_defs -DHAVE_RPC_XDR_H=1"
++else
++  rpc_defs="$rpc_defs -DHAVE_RPC_XDR_H=0"
++fi
++
++# Check for tirpc/rpc/xdr.h
++AC_CHECK_HEADERS(tirpc/rpc/xdr.h)
++if test x"$ac_cv_header_tirpc_rpc_xdr_h" = xyes; then
++  rpc_defs="$rpc_defs -DHAVE_TIRPC_RPC_XDR_H=1"
++else
++  rpc_defs="$rpc_defs -DHAVE_TIRPC_RPC_XDR_H=0"
++fi
++
++AC_SUBST([RPC_DEFS], [$rpc_defs])
++
+ AM_CONDITIONAL(LIBBACKTRACE_SUPPORTED,
+ 	       [test "x${BACKTRACE_SUPPORTED}x${BACKTRACE_USES_MALLOC}" = "x1x0"])
+ 
+diff --git a/libsanitizer/interception/Makefile.in b/libsanitizer/interception/Makefile.in
+index 0e261b4..5a49650 100644
+--- a/libsanitizer/interception/Makefile.in
++++ b/libsanitizer/interception/Makefile.in
+@@ -146,6 +146,7 @@ PACKAGE_URL = @PACKAGE_URL@
+ PACKAGE_VERSION = @PACKAGE_VERSION@
+ PATH_SEPARATOR = @PATH_SEPARATOR@
+ RANLIB = @RANLIB@
++RPC_DEFS = @RPC_DEFS@
+ SED = @SED@
+ SET_MAKE = @SET_MAKE@
+ SHELL = @SHELL@
+diff --git a/libsanitizer/libbacktrace/Makefile.in b/libsanitizer/libbacktrace/Makefile.in
+index 7d2e244..66d1962 100644
+--- a/libsanitizer/libbacktrace/Makefile.in
++++ b/libsanitizer/libbacktrace/Makefile.in
+@@ -188,6 +188,7 @@ PACKAGE_URL = @PACKAGE_URL@
+ PACKAGE_VERSION = @PACKAGE_VERSION@
+ PATH_SEPARATOR = @PATH_SEPARATOR@
+ RANLIB = @RANLIB@
++RPC_DEFS = @RPC_DEFS@
+ SED = @SED@
+ SET_MAKE = @SET_MAKE@
+ SHELL = @SHELL@
+diff --git a/libsanitizer/lsan/Makefile.in b/libsanitizer/lsan/Makefile.in
+index 3ad4401..49fa874 100644
+--- a/libsanitizer/lsan/Makefile.in
++++ b/libsanitizer/lsan/Makefile.in
+@@ -181,6 +181,7 @@ PACKAGE_URL = @PACKAGE_URL@
+ PACKAGE_VERSION = @PACKAGE_VERSION@
+ PATH_SEPARATOR = @PATH_SEPARATOR@
+ RANLIB = @RANLIB@
++RPC_DEFS = @RPC_DEFS@
+ SED = @SED@
+ SET_MAKE = @SET_MAKE@
+ SHELL = @SHELL@
+diff --git a/libsanitizer/sanitizer_common/Makefile.am b/libsanitizer/sanitizer_common/Makefile.am
+index 28ce39b..d541717 100644
+--- a/libsanitizer/sanitizer_common/Makefile.am
++++ b/libsanitizer/sanitizer_common/Makefile.am
+@@ -3,7 +3,7 @@ AM_CPPFLAGS = -I $(top_srcdir)/include -isystem $(top_srcdir)/include/system
+ # May be used by toolexeclibdir.
+ gcc_version := $(shell cat $(top_srcdir)/../gcc/BASE-VER)
+ 
+-DEFS = -D_GNU_SOURCE -D_DEBUG -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS 
++DEFS = -D_GNU_SOURCE -D_DEBUG -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS @RPC_DEFS@
+ AM_CXXFLAGS = -Wall -W -Wno-unused-parameter -Wwrite-strings -pedantic -Wno-long-long  -fPIC -fno-builtin -fno-exceptions -fno-rtti -fomit-frame-pointer -funwind-tables -fvisibility=hidden -Wno-variadic-macros
+ AM_CXXFLAGS += $(LIBSTDCXX_RAW_CXX_CXXFLAGS)
+ AM_CXXFLAGS += -std=gnu++11
+diff --git a/libsanitizer/sanitizer_common/Makefile.in b/libsanitizer/sanitizer_common/Makefile.in
+index 4a0e727..77ad416 100644
+--- a/libsanitizer/sanitizer_common/Makefile.in
++++ b/libsanitizer/sanitizer_common/Makefile.in
+@@ -129,7 +129,7 @@ CXXCPP = @CXXCPP@
+ CXXDEPMODE = @CXXDEPMODE@
+ CXXFLAGS = @CXXFLAGS@
+ CYGPATH_W = @CYGPATH_W@
+-DEFS = -D_GNU_SOURCE -D_DEBUG -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS 
++DEFS = -D_GNU_SOURCE -D_DEBUG -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS @RPC_DEFS@
+ DEPDIR = @DEPDIR@
+ DSYMUTIL = @DSYMUTIL@
+ DUMPBIN = @DUMPBIN@
+@@ -174,6 +174,7 @@ PACKAGE_URL = @PACKAGE_URL@
+ PACKAGE_VERSION = @PACKAGE_VERSION@
+ PATH_SEPARATOR = @PATH_SEPARATOR@
+ RANLIB = @RANLIB@
++RPC_DEFS = @RPC_DEFS@
+ SED = @SED@
+ SET_MAKE = @SET_MAKE@
+ SHELL = @SHELL@
+diff --git a/libsanitizer/sanitizer_common/sanitizer_platform.h b/libsanitizer/sanitizer_common/sanitizer_platform.h
+index 55bec90..e0e7402 100644
+--- a/libsanitizer/sanitizer_common/sanitizer_platform.h
++++ b/libsanitizer/sanitizer_common/sanitizer_platform.h
+@@ -126,4 +126,10 @@
+ # define SANITIZER_POINTER_FORMAT_LENGTH FIRST_32_SECOND_64(8, 12)
+ #endif
+ 
++// Assume obsolete RPC headers are available by default
++#if !defined(HAVE_RPC_XDR_H) && !defined(HAVE_TIRPC_RPC_XDR_H)
++# define HAVE_RPC_XDR_H (SANITIZER_LINUX && !SANITIZER_ANDROID)
++# define HAVE_TIRPC_RPC_XDR_H 0
++#endif
++
+ #endif // SANITIZER_PLATFORM_H
+diff --git a/libsanitizer/sanitizer_common/sanitizer_platform_limits_posix.cc b/libsanitizer/sanitizer_common/sanitizer_platform_limits_posix.cc
+index 4971c40..2ef4ca22 100644
+--- a/libsanitizer/sanitizer_common/sanitizer_platform_limits_posix.cc
++++ b/libsanitizer/sanitizer_common/sanitizer_platform_limits_posix.cc
+@@ -131,7 +131,11 @@
+ #include <netax25/ax25.h>
+ #include <netipx/ipx.h>
+ #include <netrom/netrom.h>
+-#include <rpc/xdr.h>
++#if HAVE_RPC_XDR_H
++# include <rpc/xdr.h>
++#elif HAVE_TIRPC_RPC_XDR_H
++# include <tirpc/rpc/xdr.h>
++#endif
+ #include <scsi/scsi.h>
+ #include <sys/mtio.h>
+ #include <sys/kd.h>
+@@ -1147,7 +1151,7 @@ CHECK_SIZE_AND_OFFSET(group, gr_passwd);
+ CHECK_SIZE_AND_OFFSET(group, gr_gid);
+ CHECK_SIZE_AND_OFFSET(group, gr_mem);
+ 
+-#if SANITIZER_LINUX && !SANITIZER_ANDROID
++#if HAVE_RPC_XDR_H || HAVE_TIRPC_RPC_XDR_H
+ CHECK_TYPE_SIZE(XDR);
+ CHECK_SIZE_AND_OFFSET(XDR, x_op);
+ CHECK_SIZE_AND_OFFSET(XDR, x_ops);
+diff --git a/libsanitizer/tsan/Makefile.in b/libsanitizer/tsan/Makefile.in
+index c4e6490..ed594a6 100644
+--- a/libsanitizer/tsan/Makefile.in
++++ b/libsanitizer/tsan/Makefile.in
+@@ -194,6 +194,7 @@ PACKAGE_URL = @PACKAGE_URL@
+ PACKAGE_VERSION = @PACKAGE_VERSION@
+ PATH_SEPARATOR = @PATH_SEPARATOR@
+ RANLIB = @RANLIB@
++RPC_DEFS = @RPC_DEFS@
+ SED = @SED@
+ SET_MAKE = @SET_MAKE@
+ SHELL = @SHELL@
+diff --git a/libsanitizer/ubsan/Makefile.in b/libsanitizer/ubsan/Makefile.in
+index e0f8914..0973a7a 100644
+--- a/libsanitizer/ubsan/Makefile.in
++++ b/libsanitizer/ubsan/Makefile.in
+@@ -177,6 +177,7 @@ PACKAGE_URL = @PACKAGE_URL@
+ PACKAGE_VERSION = @PACKAGE_VERSION@
+ PATH_SEPARATOR = @PATH_SEPARATOR@
+ RANLIB = @RANLIB@
++RPC_DEFS = @RPC_DEFS@
+ SED = @SED@
+ SET_MAKE = @SET_MAKE@
+ SHELL = @SHELL@
