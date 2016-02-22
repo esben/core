@@ -8,7 +8,12 @@ FILESPATHPKG = "${P}:${PN}"
 
 require gcc-common.inc
 
-RECIPE_TYPES = "cross sdk-cross canadian-cross"
+RECIPE_TYPES = "cross sdk-cross canadian-cross machine"
+
+# Avoid conflicts between machine (sysroot) packages from cross:gcc,
+# using the cross:gcc provided ones so we don't have to build machine:gcc
+# unless really neeed.
+PRIORITY:machine = "-1"
 
 # Use gcc-bootstrap as target-compiler
 C_DEPENDS_TARGET = "target-cross:gcc-bootstrap"
