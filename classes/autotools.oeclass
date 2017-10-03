@@ -26,7 +26,8 @@ OECONF_ARCHTUPLE:>sdk-cross 		= " --target=${TARGET_ARCH}"
 OECONF_ARCHTUPLE:>canadian-cross	= " --target=${TARGET_ARCH}"
 OECONF_ARCHTUPLE[emit] = "do_configure"
 
-CONFIGURE_SCRIPT ?= "${S}/configure"
+DEFAULT_CONFIGURE_SCRIPT = "${S}/configure"
+CONFIGURE_SCRIPT ?= "${DEFAULT_CONFIGURE_SCRIPT}"
 
 autotools_configure () {
     if [ -x "${CONFIGURE_SCRIPT}" ] ; then
